@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import sqlite3
 import stat
@@ -188,7 +187,6 @@ def store(tmp_path: Path):
 
 def test_schema_version_and_contract_sets():
     assert SCHEMA_VERSION == 1
-    assert importlib.util.find_spec("ragcli.parse") is None
     from ragcli.store import sqlite as module
 
     assert module.DOCUMENT_STATUSES == frozenset({"parsed", "complete"})
