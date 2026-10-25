@@ -548,6 +548,13 @@ class SqliteStore:
         ).fetchone()
         return None if row is None else _document_from_row(row)
 
+    def list_documents(self) -> list[Document]:
+        """Return every document. Ingest uses this to resume unfinished work."""
+        rows = self._connection().execute(
+            "SELECT * FROM documents ORDER BY ingested_at, doc_id"
+        ).fetchall()
+        return [_document_from_row(row) for row in rows]
+
     def update_source_path(self, doc_id: str, source_path: str, filename: str) -> None:
         _require_doc_id(doc_id)
         _require_text(source_path, "source_path")

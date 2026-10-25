@@ -1,9 +1,9 @@
 """Argument parsing and exit codes for the rag command.
 
+`rag ingest` runs the seven ingest stages and writes the corpus.
 `rag models pull` and `rag models unload` talk to loopback Ollama.
-Document parsers, ingest, and ask validate the invocation, then exit 1
-until a later change implements them. `rag config show` and the ingest
-path checks are complete.
+`rag ask`, `rag reembed`, `rag use`, `rag delete`, and `rag status`
+validate the invocation, then exit 1 until a later change implements them.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.ingest import run_ingest
 from ragcli.models_lock import ollama_lock
 from ragcli.ollama import OllamaClient, model_pull_list, pull_models
 
@@ -183,12 +184,24 @@ def _cmd_config_show(_args: argparse.Namespace, config: Config) -> int:
     return EXIT_OK
 
 
-def _cmd_ingest(args: argparse.Namespace, _config: Config) -> int:
+def _cmd_ingest(args: argparse.Namespace, config: Config) -> int:
     if args.file is None and not args.resume:
         raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
     if args.file is not None:
         _require_ingest_file(args.file)
-    raise RagError(EXIT_UNCLASSIFIED, "rag ingest 尚未實作。")
+    return run_ingest(
+        config,
+        path=None if args.file is None else Path(args.file),
+        force=bool(args.force),
+        resume=bool(args.resume),
+        no_ocr=bool(args.no_ocr),
+        no_vision=bool(args.no_vision),
+        no_embed=bool(args.no_embed),
+        strict=bool(args.strict),
+        max_pages=args.max_pages,
+        max_bytes=args.max_bytes,
+        lock_timeout=_lock_timeout(args),
+    )
 
 
 def _require_ingest_file(raw: str) -> None:

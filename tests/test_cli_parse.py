@@ -441,8 +441,8 @@ def test_ingest_unsupported_suffix_exits_3(monkeypatch, tmp_path):
     assert ".xlsx" in err
 
 
-def test_ingest_supported_file_is_not_implemented(monkeypatch, tmp_path):
-    write_config(tmp_path)
+def test_ingest_text_file_without_models_exits_0(monkeypatch, tmp_path):
+    write_config(tmp_path, "[limits]\nmin_free_bytes = 1\n")
     document = tmp_path / "note.txt"
     document.write_text("你好", encoding="utf-8")
     code, out, err = invoke(
@@ -462,11 +462,12 @@ def test_ingest_supported_file_is_not_implemented(monkeypatch, tmp_path):
         ],
         cwd=tmp_path,
     )
-    assert code == EXIT_UNCLASSIFIED
-    assert out == ""
-    assert "尚未實作" in err
+    assert code == EXIT_OK
+    assert "已入庫 note.txt" in out
+    assert "你好" not in out
     assert "你好" not in err
-    assert not (tmp_path / "data").exists()
+    assert "尚未實作" not in err
+    assert (tmp_path / "data").is_dir()
 
 
 def test_ingest_unreadable_file_exits_4(monkeypatch, tmp_path):
@@ -498,11 +499,16 @@ def test_ingest_without_path_exits_2(monkeypatch, tmp_path):
     assert "第一版要檔案路徑" in err
 
 
-def test_ingest_resume_without_path_is_not_implemented(monkeypatch, tmp_path):
-    write_config(tmp_path)
-    code, _out, err = invoke(monkeypatch, ["ingest", "--resume"], cwd=tmp_path)
-    assert code == EXIT_UNCLASSIFIED
-    assert "rag ingest 尚未實作" in err
+def test_ingest_resume_without_path_exits_0(monkeypatch, tmp_path):
+    write_config(tmp_path, "[limits]\nmin_free_bytes = 1\n")
+    code, out, err = invoke(
+        monkeypatch,
+        ["ingest", "--resume", "--no-embed", "--no-vision"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert "已繼續入庫" in out
+    assert "尚未實作" not in err
 
 
 def test_max_pages_zero_exits_2(monkeypatch, tmp_path):
