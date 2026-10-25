@@ -1,0 +1,20 @@
+# Personal corpus, chunks, vectors, and logs.
+data/
+
+# Local environments and model weights.
+.venv/
+venv/
+*.gguf
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+
+# designs
+designs/
