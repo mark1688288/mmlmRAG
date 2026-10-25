@@ -1,8 +1,9 @@
 """Argument parsing and exit codes for the rag command.
 
-Document parsers and Ollama are intentionally absent. Commands that need them
-validate the invocation, then exit 1 until a later change implements them.
-`rag config show` and the ingest path checks are complete.
+`rag models pull` and `rag models unload` talk to loopback Ollama.
+Document parsers, ingest, and ask validate the invocation, then exit 1
+until a later change implements them. `rag config show` and the ingest
+path checks are complete.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.models_lock import ollama_lock
+from ragcli.ollama import OllamaClient, model_pull_list, pull_models
 
 SUPPORTED_SUFFIXES = frozenset(
     {
@@ -140,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     pull.set_defaults(func=_cmd_models_pull)
     unload = _add_parser(model_commands, "unload", help="卸載已載入的模型")
     _add_globals(unload, root=False)
-    unload.set_defaults(func=_unimplemented("rag models unload"))
+    unload.set_defaults(func=_cmd_models_unload)
 
     config = _add_parser(commands, "config", help="查看設定")
     _add_globals(config, root=False)
@@ -228,10 +231,37 @@ def _cmd_delete(args: argparse.Namespace, _config: Config) -> int:
     raise RagError(EXIT_UNCLASSIFIED, "rag delete 尚未實作。")
 
 
-def _cmd_models_pull(args: argparse.Namespace, _config: Config) -> int:
+def _cmd_models_pull(args: argparse.Namespace, config: Config) -> int:
     if args.embed_only and args.generator_only:
         raise RagError(EXIT_USAGE, "--embed-only 同 --generator-only 不能同時使用。")
-    raise RagError(EXIT_UNCLASSIFIED, "rag models pull 尚未實作。")
+    names = model_pull_list(
+        config,
+        embed_only=args.embed_only,
+        generator_only=args.generator_only,
+        no_fallback_model=args.no_fallback_model,
+    )
+    with ollama_lock(config.data_dir, timeout=_lock_timeout(args)):
+        pull_models(OllamaClient(config.ollama_base_url), names)
+    for name in names:
+        print(f"已拉取 {name}")
+    return EXIT_OK
+
+
+def _cmd_models_unload(args: argparse.Namespace, config: Config) -> int:
+    with ollama_lock(config.data_dir, timeout=_lock_timeout(args)):
+        names = OllamaClient(config.ollama_base_url).unload_all()
+    if not names:
+        print("沒有已載入的模型。")
+    for name in names:
+        print(f"已卸載 {name}")
+    return EXIT_OK
+
+
+def _lock_timeout(args: argparse.Namespace) -> float | None:
+    value = getattr(args, "lock_timeout", None)
+    if value is None:
+        return None
+    return float(value)
 
 
 def _unimplemented(name: str):
@@ -262,11 +292,27 @@ def _add_globals(parser: argparse.ArgumentParser, *, root: bool) -> None:
         default=verbose_default,
         help="日誌改為 DEBUG。DEBUG 不印文件正文",
     )
+    parser.add_argument(
+        "--lock-timeout",
+        type=_non_negative_int,
+        default=absent,
+        help="等待 Ollama 鎖的秒數。省略則一直等。0 表示不等",
+    )
 
 
 def _add_parser(subparsers, name: str, **kwargs) -> argparse.ArgumentParser:
     kwargs.setdefault("allow_abbrev", False)
     return subparsers.add_parser(name, **kwargs)
+
+
+def _non_negative_int(raw: str) -> int:
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError("必須是零或正整數") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("必須是零或正整數")
+    return value
 
 
 def _positive_int(raw: str) -> int:
