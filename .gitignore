@@ -5,13 +5,22 @@ data/
 .venv/
 venv/
 *.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.mlmodel
+*.mlpackage
 
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+dist/
+build/
 
 # OS
 .DS_Store

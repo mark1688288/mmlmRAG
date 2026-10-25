@@ -1,0 +1,47 @@
+[paths]
+data_dir = "data"
+
+[ollama]
+base_url = "http://127.0.0.1:11434"
+
+[embed]
+model = "qwen3-embedding:0.6b"
+native_dimensions = 1024
+dimensions = 1024
+num_ctx = 2048
+batch_size = 8
+
+[generate]
+model = "qwen3.5:9b"
+fallback_model = "qwen3.5:4b"
+num_ctx = 8192
+vision_num_ctx = 4096
+num_predict = 768
+vision_num_predict = 400
+temperature = 0.2
+vision_temperature = 0.1
+
+[retrieve]
+k = 5
+max_cosine_distance = 0.85
+max_question_tokens = 512
+
+[chunk]
+target_tokens = 480
+max_tokens = 640
+overlap_tokens = 80
+
+[ocr]
+languages = ["zh-Hant", "zh-Hans", "en-US"]
+recognition_level = "accurate"
+confidence_threshold = 0.3
+rich_tokens = 40
+
+[limits]
+max_pages = 500
+max_images = 300
+max_bytes = 209715200
+min_free_bytes = 2147483648
+max_pixels = 20000000
+nine_b_min_bytes = 9663676416
+four_b_min_bytes = 6442450944
