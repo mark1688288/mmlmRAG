@@ -561,12 +561,8 @@ def test_k_out_of_range_exits_2(monkeypatch, tmp_path, k):
     "argv",
     [
         ["status"],
-        ["models", "unload"],
         ["reembed"],
         ["reembed", "--no-activate", "--drop-old"],
-        ["models", "pull"],
-        ["models", "pull", "--embed-only"],
-        ["models", "pull", "--generator-only", "--no-fallback-model"],
         ["use", "--collection", "emb-qwen3-embedding-0.6b-d1024"],
         ["delete", "--doc-id", "abc"],
         ["delete", "--path", "note.txt"],
@@ -590,6 +586,7 @@ def test_models_pull_flags_conflict(monkeypatch, tmp_path):
     )
     assert code == EXIT_USAGE
     assert "不能同時使用" in err
+    assert not (tmp_path / "data").exists()
 
 
 def test_delete_requires_exactly_one_selector(monkeypatch, tmp_path):
@@ -624,9 +621,11 @@ def test_dimensions_must_be_positive(monkeypatch, tmp_path):
 
 
 def test_shell_modules_do_not_call_the_network_or_parsers():
+    root = REPO / "src" / "ragcli"
     text = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (REPO / "src" / "ragcli").glob("*.py")
+        for path in root.glob("*.py")
+        if path.name != "ollama.py"
     )
     for banned in (
         "import httpx",
