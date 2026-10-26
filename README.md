@@ -133,15 +133,20 @@ Document text, page images, and embeddings stay on this Mac. `rag.toml` has no s
 <img src="imgs/mmlmRAG_ask.jpeg" alt="rag ask" width="720">
 
 ### Live demo
-pdf source: empf.org.hk - Mandatory Provident Fund Schemes (Specification of Dates for Purposes of Section 19M(2)(a)) (Amendment) Notice 2026 
+#### PDF to text
+source: empf.org.hk - Mandatory Provident Fund Schemes (Specification of Dates for Purposes of Section 19M(2)(a)) (Amendment) Notice 2026 
 
 <img src="imgs/mmlmRAG_LiveDemo.jpeg" alt="Ingest a PDF, then ask" width="720">
 
+#### OCR Image to text
 
 source: [samples-live/demo.gif](samples-live/demo.gif)
 
 <img src="imgs/mmlmRAG_LiveDemo-ocr-ingest.jpeg" alt="Ingest a GIF" width="720">
 <img src="imgs/mmlmRAG_LiveDemo-ocr-ask.jpeg" alt="Ask a GIF" width="720">
+
+#### Query corpus
+<img src="imgs/mmlmRAG_LiveDemo-corpus-query.jpeg" alt="Query the corpus" width="720">
 
 ## License
 
