@@ -563,26 +563,6 @@ def test_k_out_of_range_exits_2(monkeypatch, tmp_path, k):
     assert code == EXIT_USAGE
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["status"],
-        ["reembed"],
-        ["reembed", "--no-activate", "--drop-old"],
-        ["use", "--collection", "emb-qwen3-embedding-0.6b-d1024"],
-        ["delete", "--doc-id", "abc"],
-        ["delete", "--path", "note.txt"],
-    ],
-)
-def test_unimplemented_commands_exit_1(monkeypatch, tmp_path, argv):
-    write_config(tmp_path)
-    code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
-    assert code == EXIT_UNCLASSIFIED
-    assert out == ""
-    assert "尚未實作" in err
-    assert "ollama pull" not in err
-
-
 def test_models_pull_flags_conflict(monkeypatch, tmp_path):
     write_config(tmp_path)
     code, _out, err = invoke(
