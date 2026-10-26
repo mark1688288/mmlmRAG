@@ -2,7 +2,7 @@
 
 # mmlmRAG
 
-<img src="imgs/mmlmRAG_logo.jpg" alt="mmlmRAG" width="720">
+<img src="imgs/mmlmRAG_logo.jpeg" alt="mmlmRAG" width="720">
 
 mmlmRAG (`ragcli`) is a local mixed-language retrieval-augmented generation command-line tool. The `rag` command reads documents on the local device, embeds them with [Ollama](https://ollama.com), and answers questions from that corpus. Text and vectors stay in a SQLite database and a Chroma index under `data/`.
 
