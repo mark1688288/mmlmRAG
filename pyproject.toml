@@ -37,3 +37,6 @@ version = {attr = "ragcli.__version__"}
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: live loopback Ollama; skipped unless RAG_INTEGRATION=1",
+]

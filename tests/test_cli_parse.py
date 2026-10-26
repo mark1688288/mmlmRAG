@@ -530,24 +530,24 @@ def test_ask_without_question_exits_2(monkeypatch, tmp_path):
 
 
 def test_ask_reads_stdin_without_echoing_it(monkeypatch, tmp_path):
-    write_config(tmp_path)
+    write_config(tmp_path, "[limits]\nmin_free_bytes = 1\n")
     question = "這份文件對退款有什麼規定？"
     code, out, err = invoke(monkeypatch, ["ask"], cwd=tmp_path, stdin=question)
-    assert code == EXIT_UNCLASSIFIED
+    assert code == EXIT_NO_COLLECTION
     assert question not in out
     assert question not in err
-    assert "尚未實作" in err
+    assert "尚未有作用中集合" in err
 
 
 def test_ask_argument_does_not_read_stdin(monkeypatch, tmp_path):
-    write_config(tmp_path)
+    write_config(tmp_path, "[limits]\nmin_free_bytes = 1\n")
     code, out, err = invoke(
         monkeypatch,
         ["ask", "--k", "8", "hello"],
         cwd=tmp_path,
         stdin=_StdinBoom(),
     )
-    assert code == EXIT_UNCLASSIFIED
+    assert code == EXIT_NO_COLLECTION
     assert "hello" not in out
     assert "hello" not in err
 
