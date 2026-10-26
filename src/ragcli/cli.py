@@ -2,8 +2,10 @@
 
 `rag ingest` runs the seven ingest stages and writes the corpus.
 `rag models pull` and `rag models unload` talk to loopback Ollama.
-`rag ask`, `rag reembed`, `rag use`, `rag delete`, and `rag status`
-validate the invocation, then exit 1 until a later change implements them.
+`rag reembed` rebuilds or switches the vector index. `rag use` moves the
+active collection. `rag delete` removes one document. `rag status` reports
+the local corpus and whether Ollama answers. `rag ask` validates the
+invocation, then exits 1 until a later change implements it.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from ragcli.errors import (
 from ragcli.ingest import run_ingest
 from ragcli.models_lock import ollama_lock
 from ragcli.ollama import OllamaClient, model_pull_list, pull_models
+from ragcli.reembed import run_delete, run_reembed, run_status, run_use
 
 SUPPORTED_SUFFIXES = frozenset(
     {
@@ -107,10 +110,15 @@ def build_parser() -> argparse.ArgumentParser:
     reembed.add_argument("--model", help="嵌入模型標籤")
     reembed.add_argument("--dimensions", type=_positive_int, help="目標維度")
     reembed.add_argument(
+        "--native-dimensions",
+        type=_positive_int,
+        help="未知嵌入模型的原生寬度",
+    )
+    reembed.add_argument(
         "--no-activate", action="store_true", help="只建集合，不改作用中指標"
     )
     reembed.add_argument("--drop-old", action="store_true", help="刪除上一個集合")
-    reembed.set_defaults(func=_unimplemented("rag reembed"))
+    reembed.set_defaults(func=_cmd_reembed)
 
     use = _add_parser(commands, "use", help="改作用中集合")
     _add_globals(use, root=False)
@@ -125,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = _add_parser(commands, "status", help="顯示本機狀態")
     _add_globals(status, root=False)
-    status.set_defaults(func=_unimplemented("rag status"))
+    status.set_defaults(func=_cmd_status)
 
     models = _add_parser(commands, "models", help="拉取或卸載 Ollama 模型")
     _add_globals(models, root=False)
@@ -232,16 +240,33 @@ def _question_text(question: str | None) -> str:
     return text
 
 
-def _cmd_use(args: argparse.Namespace, _config: Config) -> int:
+def _cmd_reembed(args: argparse.Namespace, config: Config) -> int:
+    return run_reembed(
+        config,
+        model=args.model,
+        dimensions=args.dimensions,
+        native_dimensions=args.native_dimensions,
+        activate=not args.no_activate,
+        drop_old=bool(args.drop_old),
+        lock_timeout=_lock_timeout(args),
+    )
+
+
+def _cmd_use(args: argparse.Namespace, config: Config) -> int:
     if not args.collection:
         raise RagError(EXIT_USAGE, "rag use 要 --collection NAME。")
-    raise RagError(EXIT_UNCLASSIFIED, "rag use 尚未實作。")
+    return run_use(config, args.collection)
 
 
-def _cmd_delete(args: argparse.Namespace, _config: Config) -> int:
+def _cmd_delete(args: argparse.Namespace, config: Config) -> int:
     if (args.path is None) == (args.doc_id is None):
         raise RagError(EXIT_USAGE, "rag delete 要 --path 或 --doc-id，兩者擇一。")
-    raise RagError(EXIT_UNCLASSIFIED, "rag delete 尚未實作。")
+    path = None if args.path is None else Path(args.path)
+    return run_delete(config, path=path, doc_id=args.doc_id)
+
+
+def _cmd_status(_args: argparse.Namespace, config: Config) -> int:
+    return run_status(config)
 
 
 def _cmd_models_pull(args: argparse.Namespace, config: Config) -> int:

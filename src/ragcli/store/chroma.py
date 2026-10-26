@@ -81,6 +81,16 @@ class IndexRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CollectionInfo:
+    """Metadata of one existing collection. The name already matched it."""
+
+    name: str
+    embed_model: str
+    dimensions: int
+    embed_num_ctx: int
+
+
+@dataclass(frozen=True, slots=True)
 class QueryHit:
     """One neighbor. ``distance`` is cosine distance, smaller is closer."""
 
@@ -308,6 +318,68 @@ class ChromaIndex:
             stored[str(chunk_id)] = tuple(float(value) for value in vector)
         return stored
 
+    def describe(self, name: str) -> CollectionInfo:
+        """Return metadata for one collection.
+
+        A missing collection is exit 11. Metadata that does not produce this
+        name, or a collection that breaks the cosine and no-embedding-function
+        contract, is exit 12.
+        """
+        collection = self._open_named(name)
+        metadata = getattr(collection, "metadata", None)
+        if not isinstance(metadata, dict):
+            raise RagError(EXIT_MISMATCH, "集合 metadata 不完整。")
+        model = metadata.get("embed_model")
+        dimensions = _optional_int(metadata.get("dimensions"))
+        num_ctx = _optional_int(metadata.get("embed_num_ctx"))
+        if not isinstance(model, str) or model.strip() == "" or dimensions is None or num_ctx is None:
+            raise RagError(EXIT_MISMATCH, "集合 metadata 不完整。")
+        try:
+            expected = collection_name(model, dimensions)
+        except ValueError as exc:
+            raise RagError(EXIT_MISMATCH, "集合名稱與嵌入模型不一致。") from exc
+        if expected != name or getattr(collection, "name", None) != name:
+            raise RagError(EXIT_MISMATCH, "集合名稱與 metadata 不一致。")
+        spec = _collection_spec(model, dimensions, num_ctx)
+        _require_contract(collection, spec)
+        return CollectionInfo(
+            name=name,
+            embed_model=spec.model,
+            dimensions=spec.dimensions,
+            embed_num_ctx=spec.embed_num_ctx,
+        )
+
+    def drop(self, name: str) -> None:
+        """Delete one collection by name. A missing collection is already gone."""
+        client = self._client_open()
+        try:
+            client.delete_collection(name)
+        except Exception as exc:
+            if _is_missing_collection(exc):
+                self._collections.pop(name, None)
+                return
+            raise RagError(EXIT_UNCLASSIFIED, "刪不到集合。") from exc
+        self._collections.pop(name, None)
+
+    def chunk_ids(self, name: str) -> list[str]:
+        """Return every id in one collection. A missing collection is exit 11."""
+        collection = self._open_named(name)
+        found: list[str] = []
+        seen: set[str] = set()
+        offset = 0
+        while True:
+            result = collection.get(include=[], limit=_LIST_PAGE, offset=offset)
+            page = _ids_of(result)
+            fresh = [item for item in page if item not in seen]
+            if not fresh:
+                break
+            seen.update(fresh)
+            found.extend(fresh)
+            if len(page) < _LIST_PAGE:
+                break
+            offset += len(page)
+        return found
+
     def collection_names(self) -> list[str]:
         client = self._client_open()
         names: list[str] = []
@@ -321,6 +393,24 @@ class ChromaIndex:
                 break
             offset += _LIST_PAGE
         return sorted(names)
+
+    def _open_named(self, name: str) -> Any:
+        if not isinstance(name, str) or name.strip() == "" or "\x00" in name:
+            raise RagError(EXIT_MISMATCH, "集合名稱與 metadata 不一致。")
+        cached = self._collections.get(name)
+        if cached is not None:
+            return cached
+        try:
+            collection = self._client_open().get_collection(
+                name=name,
+                embedding_function=None,
+            )
+        except Exception as exc:
+            if _is_missing_collection(exc):
+                raise RagError(EXIT_NO_COLLECTION, "尚未有這個集合。") from exc
+            raise RagError(EXIT_MISMATCH, "讀不到這個集合。") from exc
+        self._collections[name] = collection
+        return collection
 
     def _collection(self, model: str, dimensions: int, embed_num_ctx: int) -> Any:
         spec = _collection_spec(model, dimensions, embed_num_ctx)
@@ -562,6 +652,15 @@ def _query_column(result: dict[str, Any], key: str) -> list[Any]:
     return inner
 
 
+def _ids_of(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        raise RagError(EXIT_UNCLASSIFIED, "Chroma 讀回的 id 形狀不正確。")
+    rows = _as_rows(result.get("ids"))
+    if rows is None:
+        raise RagError(EXIT_UNCLASSIFIED, "Chroma 讀回的 id 形狀不正確。")
+    return [str(item) for item in rows]
+
+
 def _as_rows(value: object) -> list[Any] | None:
     if isinstance(value, list):
         return value
@@ -789,6 +888,7 @@ __all__ = [
     "CHROMA_DIRNAME",
     "ChromaIndex",
     "ClientSettings",
+    "CollectionInfo",
     "IndexRecord",
     "QueryHit",
     "collection_name",

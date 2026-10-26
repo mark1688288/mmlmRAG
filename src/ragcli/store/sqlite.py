@@ -821,19 +821,16 @@ class SqliteStore:
             "SELECT * FROM vectors WHERE chunk_id = ? AND embed_model = ?",
             (chunk_id, embed_model),
         ).fetchone()
-        if row is None:
-            return None
-        values = decode_vector(row["vector"])
-        if len(values) != int(row["native_dim"]):
-            raise RagError(EXIT_MISMATCH, "向量長度與 native_dim 不一致。")
-        return VectorRecord(
-            chunk_id=row["chunk_id"],
-            embed_model=row["embed_model"],
-            native_dim=int(row["native_dim"]),
-            vector=values,
-            num_ctx=int(row["num_ctx"]),
-            embedded_at=row["embedded_at"],
-        )
+        return None if row is None else _vector_from_row(row)
+
+    def vectors_for_chunk(self, chunk_id: str) -> list[VectorRecord]:
+        """Return every stored model for one chunk, ordered by model tag."""
+        _require_text(chunk_id, "chunk_id")
+        rows = self._connection().execute(
+            "SELECT * FROM vectors WHERE chunk_id = ? ORDER BY embed_model",
+            (chunk_id,),
+        ).fetchall()
+        return [_vector_from_row(row) for row in rows]
 
     def get_active(self) -> ActiveIndex | None:
         rows = self._connection().execute("SELECT key, value FROM settings").fetchall()
@@ -1357,6 +1354,20 @@ def _validate_run(run: Run) -> Run:
         _require_text(run.finished_at, "finished_at")
         _require_small_int(run.exit_code if run.exit_code is not None else -1, "exit_code", maximum=255)
     return run
+
+
+def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
+    values = decode_vector(row["vector"])
+    if len(values) != int(row["native_dim"]):
+        raise RagError(EXIT_MISMATCH, "向量長度與 native_dim 不一致。")
+    return VectorRecord(
+        chunk_id=row["chunk_id"],
+        embed_model=row["embed_model"],
+        native_dim=int(row["native_dim"]),
+        vector=values,
+        num_ctx=int(row["num_ctx"]),
+        embedded_at=row["embedded_at"],
+    )
 
 
 def _image_values(image: ImageRecord) -> tuple[object, ...]:
