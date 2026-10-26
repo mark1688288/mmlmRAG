@@ -1,14 +1,16 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ragcli"
 dynamic = ["version"]
 description = "本機混合語言 RAG CLI"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
-# pymupdf is AGPL-3.0. Acceptable for a personal tool that stays on this Mac
-# and is not distributed. Replace the PDF parser before packaging it for anyone else.
+# AGPL-3.0-only matches PyMuPDF. An Artifex commercial license is the other
+# way to distribute a build that includes PyMuPDF.
 # chromadb stays pinned at 1.5.9; upgrading it is a deliberate change.
 dependencies = [
     "chromadb==1.5.9",
@@ -21,6 +23,10 @@ dependencies = [
     "pillow-heif",
     "charset-normalizer",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mark1688288/mmlmRAG"
+Source = "https://github.com/mark1688288/mmlmRAG"
 
 [project.optional-dependencies]
 dev = ["pytest"]
