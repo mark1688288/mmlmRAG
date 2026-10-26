@@ -1,7 +1,7 @@
 <div align="center">
 <img src="imgs/mmlmRAG_logo.jpeg" alt="mmlmRAG" width="720">
 
-mmlmRAG (`ragcli`) is a local mixed-language retrieval-augmented generation command-line tool. The `rag` command reads documents on the local device, embeds them with [Ollama](https://ollama.com), and answers questions from that corpus. Text and vectors stay in a SQLite database and a Chroma index under `data/`.
+mmlmRAG (`ragcli`) is a local mixed-language retrieval-augmented generation command-line tool. The `rag` command reads documents on the local device and uses local models through [Ollama](https://ollama.com) to embed them and answer questions from that corpus. Text and vectors stay in a SQLite database and a Chroma index under `data/`.
 
 [![Version](https://img.shields.io/badge/version-0.1.0-2F6F8F)](https://github.com/mark1688288/mmlmRAG)
 [![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -131,6 +131,12 @@ source: [samples-live/demo.gif](samples-live/demo.gif)
 
 <img src="imgs/mmlmRAG_LiveDemo-ocr-ingest.jpeg" alt="Ingest a GIF" width="720">
 <img src="imgs/mmlmRAG_LiveDemo-ocr-ask.jpeg" alt="Ask a GIF" width="720">
+
+#### OCR Image find objects
+
+source: [samples-live/demo.jpeg](samples-live/demo.jpeg)
+
+<img src="imgs/mmlmRAG_LiveDemo-ocr-find-objects.jpeg" alt="Find objects in images" width="720">
 
 #### Query corpus
 <img src="imgs/mmlmRAG_LiveDemo-corpus-query.jpeg" alt="Query the corpus" width="720">
