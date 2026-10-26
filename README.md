@@ -51,28 +51,15 @@ Accepted ingest files are `.pdf`, `.docx`, `.pptx`, `.txt`, `.md`, `.png`, `.jpg
 
 ## Install
 
-### Release archive
-
-Download the source archive from the GitHub release, unpack it, and run:
+### Homebrew
 
 ```bash
-./install.sh
+brew install mark1688288/mmlmrag/mmlmrag
 ```
 
-The script needs macOS and `python3.13`. It installs `rag` to `~/.local/bin` and, when `~/.mmlmrag/rag.toml` is absent, copies the archive's `rag.toml` there. If `~/.local/bin` is not on `PATH`, the script prints the line to add. Dependencies are installed from PyPI into that private environment. The archive does not carry third-party wheels.
+This installs the `rag` command from the [homebrew-mmlmrag](https://github.com/mark1688288/homebrew-mmlmrag) tap. The formula depends on macOS and `python@3.13`, and it pins the `v0.1.0` tag archive. Its Python resources are the Apple Silicon wheels for that tag. The first `rag` command creates `~/.mmlmrag`, including a private environment and, when absent, `rag.toml`. A `rag.toml` in the working directory or a parent is used instead. Otherwise `rag` uses `~/.mmlmrag/rag.toml`.
 
-The `v0.1.0` tag archive is the source a later Homebrew formula can pin. This repository does not publish a tap yet.
-
-### From a checkout
-
-```bash
-python3.13 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e .
-```
-
-Install Ollama, then pull the default models. `rag` reads `rag.toml` from the current directory or a parent, or the default file written by `install.sh`:
+Install Ollama, then pull the default models.
 
 ```bash
 brew install ollama
