@@ -4,8 +4,8 @@
 `rag models pull` and `rag models unload` talk to loopback Ollama.
 `rag reembed` rebuilds or switches the vector index. `rag use` moves the
 active collection. `rag delete` removes one document. `rag status` reports
-the local corpus and whether Ollama answers. `rag ask` validates the
-invocation, then exits 1 until a later change implements it.
+the local corpus and whether Ollama answers. `rag ask` answers one question
+from the active collection and does not embed pending chunks.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import os
 import sys
 from pathlib import Path
 
+from ragcli.ask import run_ask
 from ragcli.config import Config, format_config, load_config
 from ragcli.errors import (
     EXIT_NOT_FOUND,
@@ -224,18 +225,29 @@ def _require_ingest_file(raw: str) -> None:
         raise RagError(EXIT_UNSUPPORTED_TYPE, f"副檔名不在第一版：{label}")
 
 
-def _cmd_ask(args: argparse.Namespace, _config: Config) -> int:
-    _question_text(args.question)
-    raise RagError(EXIT_UNCLASSIFIED, "rag ask 尚未實作。")
+def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
+    return run_ask(
+        config,
+        _question_text(args.question),
+        k=args.k,
+        model=args.model,
+        allow_fallback=not bool(args.no_fallback),
+        show_chunks=bool(args.show_chunks),
+        as_json=bool(args.json),
+        lock_timeout=_lock_timeout(args),
+    )
 
 
 def _question_text(question: str | None) -> str:
-    if question is not None and question.strip() != "":
-        return question
+    if question is not None:
+        text = question.strip()
+        if text == "":
+            raise RagError(EXIT_USAGE, "缺少問題。")
+        return text
     if sys.stdin is None or sys.stdin.isatty():
         raise RagError(EXIT_USAGE, "缺少問題。")
-    text = sys.stdin.read()
-    if text.strip() == "":
+    text = sys.stdin.read().strip()
+    if text == "":
         raise RagError(EXIT_USAGE, "缺少問題。")
     return text
 

@@ -82,6 +82,7 @@ class FakeCollection:
         self.queries: list[dict] = []
         self.deletes: list[list[str]] = []
         self.rows: dict[str, tuple] = {}
+        self.distance_for: dict[str, float] = {}
 
     def upsert(self, *, ids, embeddings, documents, metadatas) -> None:
         self.upserts.append(
@@ -110,7 +111,7 @@ class FakeCollection:
             "ids": [chosen],
             "documents": [[self.rows[chunk_id][1] for chunk_id in chosen]],
             "metadatas": [[self.rows[chunk_id][2] for chunk_id in chosen]],
-            "distances": [[0.01 for _ in chosen]],
+            "distances": [[self.distance_for.get(chunk_id, 0.01) for chunk_id in chosen]],
         }
 
     def delete(self, *, ids) -> None:
