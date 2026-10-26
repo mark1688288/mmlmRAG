@@ -529,10 +529,66 @@ class Mmlmrag < Formula
   end
 
   def install
-    virtualenv_install_with_resources
+    # Keep the pinned wheels zipped. Unpacking them into the Cellar makes
+    # Homebrew rewrite Mach-O ids, and orjson's header has no room for that.
+    wheel_dir = pkgshare/"wheels"
+    wheel_dir.mkpath
+    resources.each do |resource|
+      resource.fetch unless resource.downloaded?
+      cp resource.cached_download, wheel_dir/File.basename(resource.url)
+    end
+    system "python3.13", "-m", "pip", "wheel", "--no-deps", "-w", wheel_dir, buildpath
+    pkgshare.install "rag.toml"
+
+    # First run creates ~/.mmlmrag, the same private env and config install.sh uses.
+    (bin/"rag").write <<~SH
+      #!/bin/sh
+      set -eu
+      PYTHON="#{Formula["python@3.13"].opt_bin}/python3.13"
+      WHEELS="#{pkgshare}/wheels"
+      TEMPLATE="#{pkgshare}/rag.toml"
+      ROOT="${HOME:?}/.mmlmrag"
+      VENV="$ROOT/venv"
+      REAL="$VENV/bin/rag"
+      CONFIG="$ROOT/rag.toml"
+
+      if [ ! -x "$REAL" ]; then
+        printf 'Installing mmlmRAG into %s\\n' "$ROOT" >&2
+        "$PYTHON" -m venv "$VENV"
+        "$VENV/bin/python" -m pip install --disable-pip-version-check --no-index --no-deps "$WHEELS"/*.whl
+      fi
+
+      if [ ! -f "$CONFIG" ]; then
+        mkdir -p "$(dirname "$CONFIG")"
+        cp "$TEMPLATE" "$CONFIG"
+        printf 'Created default config: %s\\n' "$CONFIG" >&2
+      fi
+
+      for arg in "$@"; do
+        case "$arg" in
+          --config|--config=*)
+            exec "$REAL" "$@"
+            ;;
+        esac
+      done
+
+      dir=$(pwd)
+      while :; do
+        if [ -f "$dir/rag.toml" ]; then
+          exec "$REAL" "$@"
+        fi
+        [ "$dir" = "/" ] && break
+        dir=$(dirname "$dir")
+      done
+      exec "$REAL" --config "$CONFIG" "$@"
+    SH
+    chmod 0755, bin/"rag"
   end
 
   test do
     assert_match "ingest", shell_output("#{bin}/rag --help")
+    config = Pathname(Dir.home)/".mmlmrag/rag.toml"
+    assert_path_exists config
+    assert_match(/config_path=#{Regexp.escape(config.realpath.to_s)}/, shell_output("#{bin}/rag config show"))
   end
 end
