@@ -125,6 +125,11 @@ source: empf.org.hk - Mandatory Provident Fund Schemes (Specification of Dates f
 
 <img src="imgs/mmlmRAG_LiveDemo.jpeg" alt="Ingest a PDF, then ask" width="720">
 
+source: hb.gov.hk/eng/policy/housing/policy/light_public_housing/pamphlet.html - "Light Public Housing — Full Rollout"
+
+<img src="imgs/mmlmRAG_LiveDemo-ocr-pdf.jpeg" alt="Ingest a PDF with OCR, then ask" width="720">
+
+
 #### OCR Image to text
 
 source: [samples-live/demo.gif](samples-live/demo.gif)
@@ -132,11 +137,13 @@ source: [samples-live/demo.gif](samples-live/demo.gif)
 <img src="imgs/mmlmRAG_LiveDemo-ocr-ingest.jpeg" alt="Ingest a GIF" width="720">
 <img src="imgs/mmlmRAG_LiveDemo-ocr-ask.jpeg" alt="Ask a GIF" width="720">
 
-#### OCR Image find objects
+#### OCR-Vision Image find objects
 
 source: [samples-live/demo.jpeg](samples-live/demo.jpeg)
 
-<img src="imgs/mmlmRAG_LiveDemo-ocr-find-objects.jpeg" alt="Find objects in images" width="720">
+<img src="imgs/mmlmRAG_LiveDemo-ocr-find-objects.jpeg" alt="Find objects in images 1" width="720">
+
+<img src="imgs/mmlmRAG_LiveDemo-ocr-vision-find-obj.jpg" alt="Find objects in images 2" width="720">
 
 #### Query corpus
 <img src="imgs/mmlmRAG_LiveDemo-corpus-query.jpeg" alt="Query the corpus" width="720">
