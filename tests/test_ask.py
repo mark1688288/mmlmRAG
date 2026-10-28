@@ -698,7 +698,7 @@ def test_low_memory_falls_back_to_4b(tmp_path):
     corpus.seed([{"text": "記憶體", "distance": 0.1}])
     assert corpus.ask("記憶體", available=SEVEN_GIB) == EXIT_OK
     assert chats(corpus.fake)[0]["model"] == FOUR_B_MODEL
-    assert "改用" in log_text(corpus.config)
+    assert "switching" in log_text(corpus.config)
 
 
 def test_no_fallback_low_memory_is_exit_13(tmp_path):
@@ -707,9 +707,9 @@ def test_no_fallback_low_memory_is_exit_13(tmp_path):
     caught = expect(
         lambda: corpus.ask("不後備", available=SEVEN_GIB, allow_fallback=False),
         EXIT_RESOURCES,
-        "沒有改用後備模型",
+        "Did not switch to the fallback model.",
     )
-    assert "可用記憶體" in caught.message
+    assert "Available memory" in caught.message
     assert chats(corpus.fake) == []
 
 
@@ -726,7 +726,7 @@ def test_ollama_down_is_exit_6(tmp_path):
     corpus = Corpus(tmp_path)
     corpus.fake.connect_error = True
     corpus.seed([{"text": "離線", "distance": 0.1}])
-    expect(lambda: corpus.ask("離線"), EXIT_OLLAMA_UNREACHABLE, "連不上 Ollama")
+    expect(lambda: corpus.ask("離線"), EXIT_OLLAMA_UNREACHABLE, "Cannot reach Ollama.")
     run = latest_run(corpus.config)
     assert run.exit_code == EXIT_OLLAMA_UNREACHABLE
     assert run.ollama_error_count >= 1
@@ -780,5 +780,5 @@ def test_cli_no_fallback_reaches_the_gate(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_RESOURCES
-    assert "沒有改用後備模型" in err
+    assert "Did not switch to the fallback model." in err
     assert chats(corpus.fake) == []

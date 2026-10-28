@@ -376,7 +376,7 @@ def test_seven_gib_selects_4b_and_a_tighter_gate_does_not_chat():
             available=7 * 1024**3,
         )
     assert exc.value.code == EXIT_RESOURCES
-    assert "沒有改用後備模型" in exc.value.message
+    assert "Did not switch to the fallback model." in exc.value.message
     assert no_fallback.bodies("/api/chat") == []
 
     missing_4b = FakeOllama()
@@ -384,7 +384,7 @@ def test_seven_gib_selects_4b_and_a_tighter_gate_does_not_chat():
     with pytest.raises(RagError) as exc:
         describe_batch([image_for("img1")], missing_4b.client(), available=7 * 1024**3)
     assert exc.value.code == EXIT_RESOURCES
-    assert "後備模型不在已拉取的清單裡" in exc.value.message
+    assert "The fallback model is not in the pulled list." in exc.value.message
 
     missing = FakeOllama()
     missing.tag_names = [EMBED]

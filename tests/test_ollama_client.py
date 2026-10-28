@@ -289,7 +289,7 @@ def test_seven_gib_does_not_load_9b_and_selects_4b(logs):
     assert chosen == FOUR_B_MODEL
     assert str(available) in logs.text
     assert str(NINE_BYTES) in logs.text
-    assert "改用" in logs.text
+    assert "switching" in logs.text
 
 
 def test_seven_gib_without_4b_in_tags_is_exit_13():
@@ -300,15 +300,15 @@ def test_seven_gib_without_4b_in_tags_is_exit_13():
     assert str(available) in exc.value.message
     assert str(NINE_BYTES) in exc.value.message
     assert "ollama pull" not in exc.value.message
-    assert "後備模型不在已拉取的清單裡" in exc.value.message
+    assert "The fallback model is not in the pulled list." in exc.value.message
 
 
 def test_no_fallback_does_not_select_4b_when_9b_does_not_fit():
     with pytest.raises(RagError) as exc:
         _gate(allow_fallback=False)
     assert exc.value.code == EXIT_RESOURCES
-    assert FOUR_B_MODEL not in exc.value.message.split("沒有改用")[0]
-    assert "沒有改用後備模型" in exc.value.message
+    assert FOUR_B_MODEL not in exc.value.message.split("Did not switch")[0]
+    assert "Did not switch to the fallback model." in exc.value.message
     assert str(7 * 1024**3) in exc.value.message
     assert str(NINE_BYTES) in exc.value.message
 
@@ -351,7 +351,7 @@ def test_missing_tags_are_exit_7_without_a_shell_command():
 
 def test_only_4b_is_selected_when_9b_was_never_pulled(logs):
     assert _gate(tags=[FOUR_B_MODEL], available=10 * 1024**3) == FOUR_B_MODEL
-    assert "改用" in logs.text
+    assert "switching" in logs.text
     with pytest.raises(RagError) as exc:
         _gate(tags=[FOUR_B_MODEL], allow_fallback=False)
     assert exc.value.code == EXIT_MODEL_MISSING
@@ -411,7 +411,7 @@ def test_redirect_is_not_followed():
         client.version()
     assert exc.value.code == EXIT_UNCLASSIFIED
     assert seen == ["127.0.0.1"]
-    assert "重新導向" in exc.value.message
+    assert "redirect" in exc.value.message
 
 
 def test_client_disables_proxy_env_and_uses_a_two_second_connect(monkeypatch):

@@ -19,8 +19,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ragcli.errors import EXIT_RESOURCES, EXIT_UNCLASSIFIED, EXIT_USAGE, RagError
+from ragcli.i18n import t
 
-LOCK_WAIT_MESSAGE = "另一個 rag 程序正在使用 Ollama"
 LOCK_NOTICE_SECONDS = 15.0
 _POLL_SECONDS = 0.2
 _PRIVATE_DIR = 0o700
@@ -39,11 +39,11 @@ def ollama_lock(
 ) -> Iterator[Path]:
     """Hold ``data/locks/ollama.lock`` for one Ollama stage."""
     if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))):
-        raise RagError(EXIT_USAGE, "--lock-timeout 必須是零或正數。")
+        raise RagError(EXIT_USAGE, t("lock.timeout_type"))
     if timeout is not None and timeout < 0:
-        raise RagError(EXIT_USAGE, "--lock-timeout 不可以是負數。")
+        raise RagError(EXIT_USAGE, t("config.not_negative", label="--lock-timeout"))
     if isinstance(poll, bool) or not isinstance(poll, (int, float)) or poll <= 0:
-        raise RagError(EXIT_USAGE, "鎖的輪詢間隔必須是正數。")
+        raise RagError(EXIT_USAGE, t("lock.poll_positive"))
     root = _locks_dir(data_dir)
     path = root / "ollama.lock"
     fd = _open_lock(path)
@@ -110,10 +110,13 @@ def _acquire(fd: int, *, timeout, now, sleep, stderr, poll) -> None:
         current = now()
         due = int((current - started) // LOCK_NOTICE_SECONDS)
         while notices < due:
-            print(LOCK_WAIT_MESSAGE, file=stderr, flush=True)
+            print(t("lock.wait"), file=stderr, flush=True)
             notices += 1
         if timeout is not None and current >= started + timeout:
-            raise RagError(EXIT_RESOURCES, f"等待 Ollama 鎖超過 {_format_seconds(timeout)} 秒。")
+            raise RagError(
+                EXIT_RESOURCES,
+                t("lock.timeout", seconds=_format_seconds(timeout)),
+            )
         remaining = None if timeout is None else (started + timeout) - current
         delay = poll if remaining is None else min(poll, remaining)
         if delay > 0:
@@ -128,14 +131,14 @@ def _format_seconds(timeout: float) -> str:
 
 def _locks_dir(data_dir: Path) -> Path:
     if not isinstance(data_dir, Path):
-        raise RagError(EXIT_UNCLASSIFIED, "data_dir 必須是路徑。")
+        raise RagError(EXIT_UNCLASSIFIED, t("lock.data_dir_type"))
     if data_dir.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     root = data_dir.expanduser().resolve()
     _ensure_private_dir(root)
     locks = root / "locks"
     if locks.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     _ensure_private_dir(locks)
     return locks
 
@@ -143,32 +146,35 @@ def _locks_dir(data_dir: Path) -> Path:
 def _ensure_private_dir(path: Path) -> None:
     """Create ``path`` as 0700. An existing directory keeps its mode."""
     if path.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     if path.exists():
         if not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, f"資料路徑不是目錄：{path.name}")
+            raise RagError(
+                EXIT_UNCLASSIFIED,
+                t("io.data_path_not_directory", name=path.name),
+            )
         return
     try:
         path.mkdir(mode=_PRIVATE_DIR)
     except FileExistsError:
         if path.is_symlink() or not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。") from None
+            raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink")) from None
         return
     os.chmod(path, _PRIVATE_DIR)
 
 
 def _open_lock(path: Path) -> int:
     if path.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     flags = os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
     try:
         fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, _PRIVATE_FILE)
     except FileExistsError:
         if path.is_symlink():
-            raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。") from None
+            raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink")) from None
         fd = os.open(path, flags)
         return fd
     except OSError as exc:
-        raise RagError(EXIT_UNCLASSIFIED, "無法建立 Ollama 鎖。") from exc
+        raise RagError(EXIT_UNCLASSIFIED, t("lock.create_failed")) from exc
     os.chmod(path, _PRIVATE_FILE)
     return fd

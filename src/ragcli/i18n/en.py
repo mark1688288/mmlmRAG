@@ -165,4 +165,64 @@ MESSAGES = {
         "distance={distance} kind={kind}"
     ),
     "status.hit.page": " page={page}",
+    "ollama.vm_stat_unreadable": "Cannot read vm_stat.",
+    "ollama.vm_stat_no_page_size": "vm_stat has no page size.",
+    "ollama.vm_stat_missing_pages": "vm_stat is missing Pages {label}.",
+    "ollama.page_size_unreadable": "Cannot read the page size.",
+    "ollama.memory_unavailable": "Available memory is unavailable.",
+    "log.memory_switch": (
+        "Available memory is {available} bytes, below the {need} bytes "
+        "{preferred} needs, switching to {fallback}."
+    ),
+    "log.model_missing_switch": "Missing model {preferred}, switching to {fallback}.",
+    "ollama.pull_empty": "There is no model to pull.",
+    "ollama.version_missing": "Ollama did not return a version.",
+    "ollama.tags_invalid": "The Ollama tags format is incorrect.",
+    "ollama.ps_invalid": "The Ollama ps format is incorrect.",
+    "ollama.ps_name_refused": "ps contains a model name that is refused.",
+    "log.pull": "Pull {model}",
+    "ollama.pull_failed": "Failed to pull {model}.",
+    "log.pull_status": "{model}: {status}",
+    "log.unload": "Unload {model}",
+    "ollama.unload_model_failed": "Cannot unload model {model}.",
+    "ollama.ps_not_empty": "After unloading, ollama ps is still not empty.",
+    "log.unload_context": "Unload {model}: context_length {actual} is not {expected}",
+    "ollama.context_mismatch": (
+        "After loading, context_length is {shown}, "
+        "and this stage's num_ctx is {num_ctx}."
+    ),
+    "ollama.ps_missing_model": "Cannot see {model} in ps after loading.",
+    "log.loaded": "Loaded {model} context_length={num_ctx}",
+    "ollama.not_json": "Ollama did not return JSON.",
+    "ollama.redirect": "Ollama returned a redirect.",
+    "ollama.unreachable": "Cannot reach Ollama.",
+    "ollama.model_missing_none": "Missing model. Run rag models pull.",
+    "ollama.memory.joiner": ", ",
+    "ollama.memory.below": "below the {need} bytes {model} needs",
+    "ollama.memory": "Available memory is {available} bytes, {pieces}.",
+    "ollama.memory.no_fallback": (
+        "Available memory is {available} bytes, {pieces}. "
+        "Did not switch to the fallback model."
+    ),
+    "ollama.memory.fallback_absent": (
+        "Available memory is {available} bytes, {pieces}. "
+        "The fallback model is not in the pulled list."
+    ),
+    "ollama.rejected": "Ollama refused the request.",
+    "ollama.rejected_detail": "Ollama refused the request: {detail}",
+    "ollama.keep_alive_invalid": "The keep_alive format is incorrect.",
+    "ollama.embed_input_invalid": "Embedding input must be a non-empty list of strings.",
+    "ollama.chat_messages_required": "chat must have messages.",
+    "ollama.chat_message_invalid": "The chat message format is incorrect.",
+    "ollama.image_base64": "An image must be base64 without a data URL prefix.",
+    "ollama.embed_format_invalid": "The Ollama embedding result format is incorrect.",
+    "ollama.chat_format_invalid": "The Ollama chat result format is incorrect.",
+    "lock.wait": "Another rag process is using Ollama",
+    "lock.timeout_type": "--lock-timeout must be zero or a positive number.",
+    "lock.poll_positive": "The lock poll interval must be a positive number.",
+    "lock.timeout": "Waited more than {seconds} seconds for the Ollama lock.",
+    "lock.data_dir_type": "data_dir must be a path.",
+    "io.data_dir_symlink": "The data directory cannot be a symbolic link.",
+    "io.data_path_not_directory": "The data path is not a directory: {name}",
+    "lock.create_failed": "Cannot create the Ollama lock.",
 }

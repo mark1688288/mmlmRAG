@@ -29,6 +29,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import t
 
 logger = logging.getLogger("ragcli.ollama")
 
@@ -135,21 +136,24 @@ def parse_vm_stat(text: str, *, page_size: int | None = None) -> int:
     size is the header's ``page size of N bytes`` when that line is present.
     """
     if not isinstance(text, str):
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。")
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable"))
     header = _PAGE_SIZE.search(text)
     if header is not None:
         size = int(header.group(1))
     elif page_size is None:
-        raise RagError(EXIT_RESOURCES, "vm_stat 沒有頁面大小。")
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_no_page_size"))
     else:
         size = page_size
     if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
-        raise RagError(EXIT_RESOURCES, "vm_stat 沒有頁面大小。")
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_no_page_size"))
     total = 0
     for label, pattern in _PAGE_COUNTS:
         found = pattern.search(text)
         if found is None:
-            raise RagError(EXIT_RESOURCES, f"vm_stat 缺少 Pages {label}。")
+            raise RagError(
+                EXIT_RESOURCES,
+                t("ollama.vm_stat_missing_pages", label=label),
+            )
         total += int(found.group(1))
     return total * size
 
@@ -162,9 +166,9 @@ def available_bytes(run: Callable[[Sequence[str]], str] | None = None) -> int:
     except RagError:
         raise
     except OSError as exc:
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。") from exc
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable")) from exc
     if not isinstance(text, str) or text.strip() == "":
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。")
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable"))
     if _PAGE_SIZE.search(text) is not None:
         return parse_vm_stat(text)
     try:
@@ -172,11 +176,11 @@ def available_bytes(run: Callable[[Sequence[str]], str] | None = None) -> int:
     except RagError:
         raise
     except OSError as exc:
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。") from exc
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable")) from exc
     try:
         page_size = int(str(raw).strip())
     except (TypeError, ValueError) as exc:
-        raise RagError(EXIT_RESOURCES, "讀不到頁面大小。") from exc
+        raise RagError(EXIT_RESOURCES, t("ollama.page_size_unreadable")) from exc
     return parse_vm_stat(text, page_size=page_size)
 
 
@@ -198,9 +202,9 @@ def choose_generator(
     The fallback is never a model with a higher memory bar than ``preferred``.
     """
     if not valid_model_name(preferred) or not valid_model_name(fallback):
-        raise RagError(EXIT_USAGE, "模型名稱不符合允許的格式。")
+        raise RagError(EXIT_USAGE, t("model.name_invalid"))
     if isinstance(available, bool) or not isinstance(available, int) or available < 0:
-        raise RagError(EXIT_RESOURCES, "可用記憶體不可用。")
+        raise RagError(EXIT_RESOURCES, t("ollama.memory_unavailable"))
     present = {name for name in tags if valid_model_name(name)}
     preferred_need = generation_min_bytes(
         preferred,
@@ -224,14 +228,24 @@ def choose_generator(
     if can_switch and available >= fallback_need:
         if preferred in present:
             logger.warning(
-                "可用記憶體 %s 位元組，低於 %s 需要的 %s，改用 %s。",
-                available,
-                preferred,
-                preferred_need,
-                fallback,
+                "%s",
+                t(
+                    "log.memory_switch",
+                    available=available,
+                    preferred=preferred,
+                    need=preferred_need,
+                    fallback=fallback,
+                ),
             )
         else:
-            logger.warning("缺少模型 %s，改用 %s。", preferred, fallback)
+            logger.warning(
+                "%s",
+                t(
+                    "log.model_missing_switch",
+                    preferred=preferred,
+                    fallback=fallback,
+                ),
+            )
         return fallback
 
     if preferred not in present and not can_switch:
@@ -270,7 +284,7 @@ def model_pull_list(
 ) -> list[str]:
     """Default order is the embed model, then 9B, then 4B."""
     if embed_only and generator_only:
-        raise RagError(EXIT_USAGE, "--embed-only 同 --generator-only 不能同時使用。")
+        raise RagError(EXIT_USAGE, t("usage.flags_exclusive"))
     names: list[str] = []
     if not generator_only:
         names.append(config.embed_model)
@@ -282,12 +296,12 @@ def model_pull_list(
     seen: set[str] = set()
     for name in names:
         if not valid_model_name(name):
-            raise RagError(EXIT_USAGE, "模型名稱不符合允許的格式。")
+            raise RagError(EXIT_USAGE, t("model.name_invalid"))
         if name not in seen:
             seen.add(name)
             ordered.append(name)
     if not ordered:
-        raise RagError(EXIT_USAGE, "沒有要拉取的模型。")
+        raise RagError(EXIT_USAGE, t("ollama.pull_empty"))
     return ordered
 
 
@@ -316,14 +330,14 @@ class OllamaClient:
         payload = self._json("GET", "/api/version", read=META_READ_TIMEOUT_SECONDS)
         version = payload.get("version")
         if not isinstance(version, str) or version.strip() == "":
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama 沒有回傳版本。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.version_missing"))
         return version
 
     def tags(self) -> tuple[str, ...]:
         payload = self._json("GET", "/api/tags", read=META_READ_TIMEOUT_SECONDS)
         models = payload.get("models")
         if not isinstance(models, list):
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama tags 格式不正確。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.tags_invalid"))
         names: list[str] = []
         seen: set[str] = set()
         for entry in models:
@@ -339,14 +353,14 @@ class OllamaClient:
         payload = self._json("GET", "/api/ps", read=META_READ_TIMEOUT_SECONDS)
         models = payload.get("models")
         if not isinstance(models, list):
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama ps 格式不正確。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.ps_invalid"))
         loaded: list[LoadedModel] = []
         for entry in models:
             if not isinstance(entry, dict):
-                raise RagError(EXIT_UNCLASSIFIED, "Ollama ps 格式不正確。")
+                raise RagError(EXIT_UNCLASSIFIED, t("ollama.ps_invalid"))
             name = entry.get("name", entry.get("model"))
             if not valid_model_name(name):
-                raise RagError(EXIT_RESOURCES, "ps 裡有拒絕處理的模型名稱。")
+                raise RagError(EXIT_RESOURCES, t("ollama.ps_name_refused"))
             ctx = entry.get("context_length")
             if isinstance(ctx, bool) or not isinstance(ctx, int):
                 ctx = None
@@ -401,11 +415,11 @@ class OllamaClient:
         _require_num_ctx(num_ctx)
         alive = _require_keep_alive(keep_alive)
         if isinstance(num_predict, bool) or not isinstance(num_predict, int) or num_predict < 1:
-            raise RagError(EXIT_USAGE, "num_predict 必須是正整數。")
+            raise RagError(EXIT_USAGE, t("usage.named_positive_int", name="num_predict"))
         if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
-            raise RagError(EXIT_USAGE, "temperature 必須是數字。")
+            raise RagError(EXIT_USAGE, t("config.must_be_number", label="temperature"))
         if temperature < 0:
-            raise RagError(EXIT_USAGE, "temperature 不可以是負數。")
+            raise RagError(EXIT_USAGE, t("config.not_negative", label="temperature"))
         body_messages = _message_payloads(messages)
         self.prepare_stage(model, num_ctx)
         payload = self._json(
@@ -434,7 +448,7 @@ class OllamaClient:
     def pull(self, model: str) -> None:
         """Download one model. The HTTP body is status JSON, not the weights."""
         _require_model(model)
-        logger.info("拉取 %s", model)
+        logger.info("%s", t("log.pull", model=model))
         _status, raw = self._exchange(
             "POST",
             "/api/pull",
@@ -451,24 +465,27 @@ class OllamaClient:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise RagError(EXIT_UNCLASSIFIED, f"拉取 {model} 失敗。") from exc
+                raise RagError(
+                    EXIT_UNCLASSIFIED,
+                    t("ollama.pull_failed", model=model),
+                ) from exc
             if not isinstance(event, dict):
-                raise RagError(EXIT_UNCLASSIFIED, f"拉取 {model} 失敗。")
+                raise RagError(EXIT_UNCLASSIFIED, t("ollama.pull_failed", model=model))
             if event.get("error"):
-                raise RagError(EXIT_UNCLASSIFIED, f"拉取 {model} 失敗。")
+                raise RagError(EXIT_UNCLASSIFIED, t("ollama.pull_failed", model=model))
             status = event.get("status")
             if status == "success":
                 saw_success = True
             elif isinstance(status, str) and status != "downloading" and status != last_status:
-                logger.info("%s：%s", model, status)
+                logger.info("%s", t("log.pull_status", model=model, status=status))
                 last_status = status
         if not saw_success:
-            raise RagError(EXIT_UNCLASSIFIED, f"拉取 {model} 失敗。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.pull_failed", model=model))
 
     def unload_model(self, model: str) -> None:
         """Ask Ollama to drop ``model``. Generate first; embed if that is refused."""
         _require_model(model)
-        logger.info("卸載 %s", model)
+        logger.info("%s", t("log.unload", model=model))
         status, _raw = self._exchange(
             "POST",
             "/api/generate",
@@ -486,7 +503,7 @@ class OllamaClient:
             accept_error=True,
         )
         if status >= 400:
-            raise RagError(EXIT_UNCLASSIFIED, f"無法卸載模型 {model}。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.unload_model_failed", model=model))
 
     def unload_all(self) -> list[str]:
         """Unload every model in ``ps``. Afterwards ``ps`` must be empty."""
@@ -494,7 +511,7 @@ class OllamaClient:
         for name in names:
             self.unload_model(name)
         if self.ps():
-            raise RagError(EXIT_RESOURCES, "卸載後 ollama ps 仍不是空的。")
+            raise RagError(EXIT_RESOURCES, t("ollama.ps_not_empty"))
         return names
 
     def prepare_stage(self, model: str, num_ctx: int) -> None:
@@ -511,18 +528,22 @@ class OllamaClient:
         loaded = self.ps()
         others = [item for item in loaded if item.name != model]
         if others:
-            raise RagError(EXIT_RESOURCES, "卸載後仍有其他模型。")
+            raise RagError(EXIT_RESOURCES, t("ask.models_still_loaded"))
         target = next((item for item in loaded if item.name == model), None)
         if target is not None and target.context_length != num_ctx:
+            actual = target.context_length
             logger.info(
-                "卸載 %s：context_length %s 不是 %s",
-                model,
-                target.context_length,
-                num_ctx,
+                "%s",
+                t(
+                    "log.unload_context",
+                    model=model,
+                    actual="None" if actual is None else actual,
+                    expected=num_ctx,
+                ),
             )
             self.unload_model(model)
             if self.ps():
-                raise RagError(EXIT_RESOURCES, "卸載後 ollama ps 仍不是空的。")
+                raise RagError(EXIT_RESOURCES, t("ollama.ps_not_empty"))
 
     def verify_stage(self, model: str, num_ctx: int, *, keep_alive: str | int) -> None:
         """After the request, CONTEXT must match. A mismatch is unloaded and exit 13.
@@ -539,33 +560,37 @@ class OllamaClient:
                 shown = target.context_length
                 raise RagError(
                     EXIT_RESOURCES,
-                    f"載入後 context_length 是 {shown}，本階段 num_ctx 是 {num_ctx}。",
+                    t(
+                        "ollama.context_mismatch",
+                        shown="None" if shown is None else shown,
+                        num_ctx=num_ctx,
+                    ),
                 )
-            raise RagError(EXIT_RESOURCES, "卸載後仍有其他模型。")
+            raise RagError(EXIT_RESOURCES, t("ask.models_still_loaded"))
         if target is None:
             if keep_alive in (0, "0"):
-                logger.info("已卸載 %s", model)
+                logger.info("%s", t("status.unloaded", name=model))
                 return
-            raise RagError(EXIT_RESOURCES, f"載入後在 ps 看不到 {model}。")
-        logger.info("已載入 %s context_length=%s", model, num_ctx)
+            raise RagError(EXIT_RESOURCES, t("ollama.ps_missing_model", model=model))
+        logger.info("%s", t("log.loaded", model=model, num_ctx=num_ctx))
 
     def release_stage(self, model: str) -> None:
         """End a stage: ``keep_alive`` 0, then require an empty ``ps``."""
         _require_model(model)
         self.unload_model(model)
         if self.ps():
-            raise RagError(EXIT_RESOURCES, "卸載後 ollama ps 仍不是空的。")
+            raise RagError(EXIT_RESOURCES, t("ollama.ps_not_empty"))
 
     def _drop_quietly(self, model: str, others: Sequence[LoadedModel]) -> None:
         for item in others:
             try:
                 self.unload_model(item.name)
             except RagError:
-                logger.error("卸載 %s 失敗。", item.name)
+                logger.error("%s", t("log.unload_failed", model=item.name))
         try:
             self.unload_model(model)
         except RagError:
-            logger.error("卸載 %s 失敗。", model)
+            logger.error("%s", t("log.unload_failed", model=model))
 
     def _json(
         self,
@@ -586,9 +611,9 @@ class OllamaClient:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama 回傳的不是 JSON。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.not_json")) from exc
         if not isinstance(payload, dict):
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama 回傳的不是 JSON。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.not_json"))
         return payload
 
     def _exchange(
@@ -613,28 +638,30 @@ class OllamaClient:
                 response = http.request(method, path, json=json_body, timeout=timeout)
                 status = response.status_code
                 if 300 <= status < 400:
-                    raise RagError(EXIT_UNCLASSIFIED, "Ollama 回傳了重新導向。")
+                    raise RagError(EXIT_UNCLASSIFIED, t("ollama.redirect"))
                 raw = response.content
         except RagError:
             raise
         except httpx.TransportError as exc:
-            logger.error("連不上 Ollama。")
-            raise RagError(EXIT_OLLAMA_UNREACHABLE, "連不上 Ollama。") from exc
+            logger.error("%s", t("ollama.unreachable"))
+            raise RagError(EXIT_OLLAMA_UNREACHABLE, t("ollama.unreachable")) from exc
         if status == 404 and not accept_error:
             raise _missing_models([model] if model else [])
         if status >= 400 and not accept_error:
             detail = _safe_error(raw)
-            message = "Ollama 拒絕請求。"
             if detail:
-                message = f"Ollama 拒絕請求：{detail}"
-            raise RagError(EXIT_UNCLASSIFIED, message)
+                raise RagError(
+                    EXIT_UNCLASSIFIED,
+                    t("ollama.rejected_detail", detail=detail),
+                )
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.rejected"))
         return status, raw
 
 
 def _run_readonly(argv: Sequence[str]) -> str:
     command = tuple(argv)
     if command not in _ALLOWED_PROBES:
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。")
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable"))
     try:
         completed = subprocess.run(
             list(command),
@@ -643,20 +670,18 @@ def _run_readonly(argv: Sequence[str]) -> str:
             text=True,
         )
     except OSError as exc:
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。") from exc
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable")) from exc
     if completed.returncode != 0:
-        raise RagError(EXIT_RESOURCES, "讀不到 vm_stat。")
+        raise RagError(EXIT_RESOURCES, t("ollama.vm_stat_unreadable"))
     return completed.stdout
 
 
 def _missing_models(names: Sequence[str]) -> RagError:
     labels = [name for name in names if name]
     if labels:
-        shown = "、".join(labels)
-        message = f"缺少模型 {shown}。請執行 rag models pull。"
-    else:
-        message = "缺少模型。請執行 rag models pull。"
-    return RagError(EXIT_MODEL_MISSING, message)
+        shown = t("ollama.list_joiner").join(labels)
+        return RagError(EXIT_MODEL_MISSING, t("ollama.model_missing", names=shown))
+    return RagError(EXIT_MODEL_MISSING, t("ollama.model_missing_none"))
 
 
 def _refuse_memory(
@@ -667,65 +692,72 @@ def _refuse_memory(
     fallback: str,
     present: set[str],
 ) -> str:
-    pieces = "，".join(f"低於 {model} 需要的 {need}" for model, need in checks)
-    message = f"可用記憶體 {available} 位元組，{pieces}。"
+    pieces = t("ollama.memory.joiner").join(
+        t("ollama.memory.below", model=model, need=need) for model, need in checks
+    )
     if not allow_fallback:
-        message += "沒有改用後備模型。"
-    elif fallback not in present:
-        message += "後備模型不在已拉取的清單裡。"
-    raise RagError(EXIT_RESOURCES, message)
+        raise RagError(
+            EXIT_RESOURCES,
+            t("ollama.memory.no_fallback", available=available, pieces=pieces),
+        )
+    if fallback not in present:
+        raise RagError(
+            EXIT_RESOURCES,
+            t("ollama.memory.fallback_absent", available=available, pieces=pieces),
+        )
+    raise RagError(EXIT_RESOURCES, t("ollama.memory", available=available, pieces=pieces))
 
 
 def _require_model(model: str) -> None:
     if not valid_model_name(model):
-        raise RagError(EXIT_USAGE, "模型名稱不符合允許的格式。")
+        raise RagError(EXIT_USAGE, t("model.name_invalid"))
 
 
 def _require_num_ctx(num_ctx: int) -> None:
     if isinstance(num_ctx, bool) or not isinstance(num_ctx, int) or num_ctx < 1:
-        raise RagError(EXIT_USAGE, "num_ctx 必須是正整數。")
+        raise RagError(EXIT_USAGE, t("usage.named_positive_int", name="num_ctx"))
 
 
 def _require_keep_alive(value: str | int) -> str | int:
     if isinstance(value, bool):
-        raise RagError(EXIT_USAGE, "keep_alive 格式不正確。")
+        raise RagError(EXIT_USAGE, t("ollama.keep_alive_invalid"))
     if isinstance(value, int):
         if value < 0:
-            raise RagError(EXIT_USAGE, "keep_alive 格式不正確。")
+            raise RagError(EXIT_USAGE, t("ollama.keep_alive_invalid"))
         return value
     if isinstance(value, str) and _KEEP_ALIVE.fullmatch(value):
         return value
-    raise RagError(EXIT_USAGE, "keep_alive 格式不正確。")
+    raise RagError(EXIT_USAGE, t("ollama.keep_alive_invalid"))
 
 
 def _require_texts(inputs: Sequence[str]) -> list[str]:
     if isinstance(inputs, str) or not isinstance(inputs, Sequence) or not inputs:
-        raise RagError(EXIT_USAGE, "嵌入輸入必須是非空字串清單。")
+        raise RagError(EXIT_USAGE, t("ollama.embed_input_invalid"))
     texts: list[str] = []
     for item in inputs:
         if not isinstance(item, str) or item == "":
-            raise RagError(EXIT_USAGE, "嵌入輸入必須是非空字串清單。")
+            raise RagError(EXIT_USAGE, t("ollama.embed_input_invalid"))
         texts.append(item)
     return texts
 
 
 def _message_payloads(messages: Sequence[ChatMessage]) -> list[dict]:
     if not isinstance(messages, Sequence) or isinstance(messages, str) or not messages:
-        raise RagError(EXIT_USAGE, "chat 必須有訊息。")
+        raise RagError(EXIT_USAGE, t("ollama.chat_messages_required"))
     payloads: list[dict] = []
     for message in messages:
         if not isinstance(message, ChatMessage):
-            raise RagError(EXIT_USAGE, "chat 訊息格式不正確。")
+            raise RagError(EXIT_USAGE, t("ollama.chat_message_invalid"))
         if message.role not in {"system", "user", "assistant"}:
-            raise RagError(EXIT_USAGE, "chat 訊息格式不正確。")
+            raise RagError(EXIT_USAGE, t("ollama.chat_message_invalid"))
         if not isinstance(message.content, str):
-            raise RagError(EXIT_USAGE, "chat 訊息格式不正確。")
+            raise RagError(EXIT_USAGE, t("ollama.chat_message_invalid"))
         payload: dict = {"role": message.role, "content": message.content}
         if message.images:
             images: list[str] = []
             for image in message.images:
                 if not isinstance(image, str) or image == "" or image.startswith("data:"):
-                    raise RagError(EXIT_USAGE, "圖像必須是沒有 data URL 前綴的 base64。")
+                    raise RagError(EXIT_USAGE, t("ollama.image_base64"))
                 images.append(image)
             payload["images"] = images
         payloads.append(payload)
@@ -735,15 +767,15 @@ def _message_payloads(messages: Sequence[ChatMessage]) -> list[dict]:
 def _embeddings(payload: Mapping, *, expected: int) -> list[list[float]]:
     raw = payload.get("embeddings")
     if not isinstance(raw, list) or len(raw) != expected:
-        raise RagError(EXIT_UNCLASSIFIED, "Ollama 嵌入結果數量不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.embed_count"))
     vectors: list[list[float]] = []
     for item in raw:
         if not isinstance(item, list) or not item:
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama 嵌入結果格式不正確。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.embed_format_invalid"))
         vector: list[float] = []
         for number in item:
             if isinstance(number, bool) or not isinstance(number, (int, float)):
-                raise RagError(EXIT_UNCLASSIFIED, "Ollama 嵌入結果格式不正確。")
+                raise RagError(EXIT_UNCLASSIFIED, t("ollama.embed_format_invalid"))
             vector.append(float(number))
         vectors.append(vector)
     return vectors
@@ -752,7 +784,7 @@ def _embeddings(payload: Mapping, *, expected: int) -> list[list[float]]:
 def _chat_result(payload: Mapping) -> ChatResult:
     message = payload.get("message")
     if not isinstance(message, dict):
-        raise RagError(EXIT_UNCLASSIFIED, "Ollama chat 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ollama.chat_format_invalid"))
     content = message.get("content", "")
     thinking = message.get("thinking", payload.get("thinking", ""))
     if not isinstance(content, str):

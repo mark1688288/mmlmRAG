@@ -1089,7 +1089,7 @@ def test_ollama_down_exits_6_without_a_document(tmp_path):
     with pytest.raises(RagError) as exc:
         run(config, fake, path)
     assert exc.value.code == EXIT_OLLAMA_UNREACHABLE
-    assert "連不上 Ollama" in exc.value.message
+    assert "Cannot reach Ollama." in exc.value.message
     store = open_store(config)
     try:
         assert store.list_documents() == []

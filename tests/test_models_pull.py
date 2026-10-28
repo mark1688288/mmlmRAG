@@ -20,7 +20,8 @@ import pytest
 from ragcli.cli import main
 from ragcli.config import load_config
 from ragcli.errors import EXIT_OK, EXIT_RESOURCES, EXIT_UNCLASSIFIED, EXIT_USAGE, RagError
-from ragcli.models_lock import LOCK_WAIT_MESSAGE, exclusive_model, ollama_lock
+from ragcli.i18n import set_language
+from ragcli.models_lock import exclusive_model, ollama_lock
 from ragcli.ollama import (
     FOUR_B_MODEL,
     NINE_B_MODEL,
@@ -309,7 +310,7 @@ def test_cli_unreachable_ollama_is_exit_6(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["models", "pull", "--embed-only"], cwd=tmp_path)
     assert code == 6
     assert out == ""
-    assert "連不上" in err
+    assert "Cannot reach Ollama." in err
     assert "ollama pull" not in err
 
 
@@ -321,7 +322,7 @@ def test_cli_pull_failure_does_not_print_success(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["models", "pull", "--embed-only"], cwd=tmp_path)
     assert code == EXIT_UNCLASSIFIED
     assert out == ""
-    assert "失敗" in err
+    assert "Failed to pull" in err
     assert "ollama pull" not in err
 
 
@@ -335,7 +336,7 @@ def test_bad_model_name_does_not_create_data_or_connect(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["models", "pull"], cwd=tmp_path)
     assert code == EXIT_USAGE
     assert out == ""
-    assert "模型名稱" in err
+    assert "model name" in err
     assert not (tmp_path / "data").exists()
 
 
@@ -412,7 +413,7 @@ def test_lock_timeout_zero_does_not_print_the_wait_notice(tmp_path):
     finally:
         let_go(proc)
     assert exc.value.code == EXIT_RESOURCES
-    assert "等待 Ollama 鎖超過 0 秒" in exc.value.message
+    assert "Waited more than 0 seconds for the Ollama lock." in exc.value.message
     assert stderr.getvalue() == ""
     assert probe(data) == "free"
 
@@ -437,9 +438,36 @@ def test_lock_wait_notice_every_fifteen_seconds(tmp_path):
     finally:
         let_go(proc)
     assert exc.value.code == EXIT_RESOURCES
-    assert stderr.getvalue().splitlines() == [LOCK_WAIT_MESSAGE, LOCK_WAIT_MESSAGE]
+    assert stderr.getvalue().splitlines() == [
+        "Another rag process is using Ollama",
+        "Another rag process is using Ollama",
+    ]
     assert "31" in exc.value.message
     assert probe(data) == "free"
+
+
+def test_lock_wait_notice_follows_the_active_language(tmp_path):
+    data = tmp_path / "data"
+    path = lock_path(data)
+    proc = hold(path)
+    stderr = io.StringIO()
+    clock = Clock()
+    set_language("zh")
+    try:
+        with pytest.raises(RagError):
+            with ollama_lock(
+                data,
+                timeout=16,
+                stderr=stderr,
+                now=clock.now,
+                sleep=clock.sleep,
+                poll=5,
+            ):
+                pass
+    finally:
+        set_language("en")
+        let_go(proc)
+    assert stderr.getvalue().splitlines() == ["另一個 rag 程序正在使用 Ollama"]
 
 
 def test_keyboard_interrupt_releases_the_lock(tmp_path):
@@ -498,5 +526,5 @@ def test_cli_lock_timeout_does_not_open_ollama(monkeypatch, tmp_path):
         let_go(proc)
     assert code == EXIT_RESOURCES
     assert out == ""
-    assert "等待 Ollama 鎖" in err
+    assert "for the Ollama lock." in err
     assert "ollama pull" not in err
