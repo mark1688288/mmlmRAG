@@ -132,11 +132,11 @@ def load_config(
 
     k = _int(retrieve, "k", 5, "retrieve.k", minimum=1)
     if k > 8:
-        raise RagError(EXIT_USAGE, "retrieve.k 必須是 1 到 8。")
+        raise RagError(EXIT_USAGE, t("config.retrieve_k"))
 
     level = _string(ocr, "recognition_level", "accurate", "ocr.recognition_level")
     if level != "accurate":
-        raise RagError(EXIT_USAGE, "ocr.recognition_level 第一版只可以是 accurate。")
+        raise RagError(EXIT_USAGE, t("ocr.recognition_level_invalid"))
 
     return Config(
         config_path=path,
@@ -265,20 +265,24 @@ def format_config(config: Config) -> str:
 def normalize_base_url(url: str) -> str:
     """Accept only loopback Ollama URLs and return one without a trailing slash."""
     if not isinstance(url, str):
-        raise RagError(EXIT_USAGE, "ollama.base_url 必須是字串。")
+        raise RagError(
+            EXIT_USAGE, t("config.must_be_string", label="ollama.base_url")
+        )
     raw = url.strip()
     if raw == "":
-        raise RagError(EXIT_USAGE, "ollama.base_url 必須是非空字串。")
+        raise RagError(
+            EXIT_USAGE, t("config.nonempty_string", label="ollama.base_url")
+        )
     parts = urllib.parse.urlsplit(raw)
     if parts.username is not None or parts.password is not None or "@" in parts.netloc:
-        raise RagError(EXIT_USAGE, "Ollama URL 不能包含帳號或密碼。")
+        raise RagError(EXIT_USAGE, t("config.url_userinfo"))
     host = parts.hostname
     if parts.scheme.lower() not in {"http", "https"} or host is None:
         raise RagError(EXIT_USAGE, _reject_url(raw))
     if host.lower() not in _LOOPBACK_HOSTS:
         raise RagError(EXIT_USAGE, _reject_url(raw))
     if parts.path not in {"", "/"} or parts.query or parts.fragment:
-        raise RagError(EXIT_USAGE, f"Ollama URL 不能帶路徑或查詢：{raw}")
+        raise RagError(EXIT_USAGE, t("config.url_path", url=raw))
     shown = host.lower()
     if ":" in shown:
         shown = f"[{shown}]"
@@ -287,7 +291,7 @@ def normalize_base_url(url: str) -> str:
 
 
 def _reject_url(url: str) -> str:
-    return f"Ollama 只接受迴路地址（127.0.0.1、localhost、::1），拒絕：{url}"
+    return t("config.url_loopback", url=url)
 
 
 def peek_ui_language(
@@ -349,7 +353,7 @@ def _locate_config(config_path: Path | None, work_dir: Path) -> Path:
         return _find_config(work_dir)
     path = _resolve_user_path(config_path, work_dir)
     if not path.is_file():
-        raise RagError(EXIT_USAGE, f"找不到設定檔：{path}")
+        raise RagError(EXIT_USAGE, t("config.file_missing", path=path))
     return path
 
 
@@ -361,37 +365,43 @@ def _find_config(start: Path) -> Path:
         candidate = directory / "rag.toml"
         if candidate.is_file():
             return candidate
-    raise RagError(EXIT_USAGE, "找不到 rag.toml。可以用 --config 指定。")
+    raise RagError(EXIT_USAGE, t("config.toml_missing"))
 
 
 def _read_toml(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RagError(EXIT_USAGE, f"讀不到設定檔：{path}") from exc
+        raise RagError(EXIT_USAGE, t("config.unreadable", path=path)) from exc
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise RagError(EXIT_USAGE, f"設定檔不是有效的 TOML：{path}：{exc}") from exc
+        raise RagError(
+            EXIT_USAGE, t("config.toml_invalid", path=path, error=str(exc))
+        ) from exc
     if not isinstance(raw, dict):
-        raise RagError(EXIT_USAGE, f"設定檔格式不正確：{path}")
+        raise RagError(EXIT_USAGE, t("config.format_invalid", path=path))
     return raw
 
 
 def _sections(raw: dict) -> dict[str, dict]:
     extra = set(raw) - set(_SECTIONS)
     if extra:
-        names = "、".join(sorted(str(name) for name in extra))
-        raise RagError(EXIT_USAGE, f"設定檔有不明區段：{names}")
+        names = t("config.list_joiner").join(sorted(str(name) for name in extra))
+        raise RagError(EXIT_USAGE, t("config.unknown_section", names=names))
     found: dict[str, dict] = {}
     for name, allowed in _SECTIONS.items():
         table = raw.get(name, {})
         if not isinstance(table, dict):
-            raise RagError(EXIT_USAGE, f"[{name}] 必須是表。")
+            raise RagError(EXIT_USAGE, t("config.must_be_table", name=name))
         unknown = set(table) - allowed
         if unknown:
-            fields = "、".join(sorted(str(field) for field in unknown))
-            raise RagError(EXIT_USAGE, f"[{name}] 有不明欄位：{fields}")
+            fields = t("config.list_joiner").join(
+                sorted(str(field) for field in unknown)
+            )
+            raise RagError(
+                EXIT_USAGE, t("config.unknown_field", name=name, fields=fields)
+            )
         found[name] = table
     return found
 
@@ -412,7 +422,7 @@ def _string(table: dict, key: str, default: str, label: str) -> str:
         return default
     value = table[key]
     if not isinstance(value, str) or value == "" or value != value.strip():
-        raise RagError(EXIT_USAGE, f"{label} 必須是非空字串。")
+        raise RagError(EXIT_USAGE, t("config.nonempty_string", label=label))
     return value
 
 
@@ -422,10 +432,12 @@ def _int(table: dict, key: str, default: int, label: str, *, minimum: int) -> in
     else:
         raw = table[key]
         if isinstance(raw, bool) or not isinstance(raw, int):
-            raise RagError(EXIT_USAGE, f"{label} 必須是整數。")
+            raise RagError(EXIT_USAGE, t("config.must_be_int", label=label))
         value = raw
     if value < minimum:
-        raise RagError(EXIT_USAGE, f"{label} 必須大於或等於 {minimum}。")
+        raise RagError(
+            EXIT_USAGE, t("config.minimum", label=label, minimum=minimum)
+        )
     return value
 
 
@@ -435,10 +447,10 @@ def _float(table: dict, key: str, default: float, label: str) -> float:
     else:
         raw = table[key]
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            raise RagError(EXIT_USAGE, f"{label} 必須是數字。")
+            raise RagError(EXIT_USAGE, t("config.must_be_number", label=label))
         value = float(raw)
     if value < 0:
-        raise RagError(EXIT_USAGE, f"{label} 不可以是負數。")
+        raise RagError(EXIT_USAGE, t("config.not_negative", label=label))
     return value
 
 
@@ -447,10 +459,10 @@ def _languages(table: dict) -> tuple[str, ...]:
         return ("zh-Hant", "zh-Hans", "en-US")
     value = table["languages"]
     if not isinstance(value, list) or not value:
-        raise RagError(EXIT_USAGE, "ocr.languages 必須是非空字串清單。")
+        raise RagError(EXIT_USAGE, t("ocr.languages_invalid"))
     items: list[str] = []
     for item in value:
         if not isinstance(item, str) or item == "" or item != item.strip():
-            raise RagError(EXIT_USAGE, "ocr.languages 必須是非空字串清單。")
+            raise RagError(EXIT_USAGE, t("ocr.languages_invalid"))
         items.append(item)
     return tuple(items)

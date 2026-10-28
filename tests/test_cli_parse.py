@@ -287,7 +287,7 @@ def test_missing_explicit_config_does_not_walk(monkeypatch):
         cwd=REPO,
     )
     assert code == EXIT_USAGE
-    assert "找不到設定檔" in err
+    assert "Cannot find the config file" in err
 
 
 def test_invalid_toml(monkeypatch, tmp_path):
@@ -298,7 +298,7 @@ def test_invalid_toml(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_USAGE
-    assert "TOML" in err
+    assert "not valid TOML" in err
 
 
 def test_think_setting_is_rejected(monkeypatch, tmp_path):
@@ -310,6 +310,7 @@ def test_think_setting_is_rejected(monkeypatch, tmp_path):
     )
     assert code == EXIT_USAGE
     assert "think" in err
+    assert "unknown field" in err
 
 
 def test_bool_k_is_rejected(monkeypatch, tmp_path):
@@ -320,7 +321,44 @@ def test_bool_k_is_rejected(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_USAGE
-    assert "retrieve.k" in err
+    assert "retrieve.k must be an integer." in err
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("[retrieve]\nk = 9\n", "retrieve.k must be from 1 to 8."),
+        (
+            '[ocr]\nrecognition_level = "fast"\n',
+            "ocr.recognition_level can only be accurate in this version.",
+        ),
+        (
+            "[ocr]\nlanguages = []\n",
+            "ocr.languages must be a non-empty list of strings.",
+        ),
+        (
+            "[retrieve]\nmax_cosine_distance = -0.1\n",
+            "retrieve.max_cosine_distance cannot be negative.",
+        ),
+        (
+            "[limits]\nmax_pages = 0\n",
+            "limits.max_pages must be greater than or equal to 1.",
+        ),
+        (
+            '[extra]\ncolor = "y"\n[theme]\ncolor = "x"\n',
+            "Config file has an unknown section: extra, theme",
+        ),
+    ],
+)
+def test_config_value_errors_are_english(monkeypatch, tmp_path, body, expected):
+    write_config(tmp_path, body)
+    code, _out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert expected in err
 
 
 @pytest.mark.parametrize(
@@ -343,7 +381,7 @@ def test_non_loopback_url_is_rejected(monkeypatch, tmp_path, url):
     )
     assert code == EXIT_USAGE
     assert out == ""
-    assert "迴路" in err
+    assert "loopback" in err
     assert not (tmp_path / "elsewhere").exists()
 
 
@@ -361,7 +399,7 @@ def test_userinfo_is_rejected_without_echoing_the_secret(monkeypatch, tmp_path):
     assert code == EXIT_USAGE
     assert secret not in out
     assert secret not in err
-    assert "帳號或密碼" in err
+    assert "username or password" in err
 
 
 def test_base_url_path_is_rejected(monkeypatch, tmp_path):
@@ -372,7 +410,7 @@ def test_base_url_path_is_rejected(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_USAGE
-    assert "路徑" in err
+    assert "path or query" in err
 
 
 @pytest.mark.parametrize(
@@ -1039,7 +1077,7 @@ def test_unknown_ui_field_is_still_rejected(monkeypatch, tmp_path):
     )
     assert code == EXIT_USAGE
     assert "theme" in err
-    assert "不明欄位" in err
+    assert "unknown field" in err
 
 
 def test_verbose_logs_language_source_without_a_path(monkeypatch, tmp_path):
