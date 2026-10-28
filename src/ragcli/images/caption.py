@@ -24,6 +24,7 @@ from PIL import Image, UnidentifiedImageError
 
 from ragcli.config import Config
 from ragcli.errors import EXIT_UNCLASSIFIED, EXIT_USAGE, RagError
+from ragcli.i18n import t
 from ragcli.ollama import (
     KEEP_ALIVE_BATCH,
     VISION_READ_TIMEOUT_SECONDS,
@@ -109,9 +110,9 @@ def jpeg_for_vision(
 ) -> bytes:
     """Return a JPEG whose long side is at most ``long_side``. Does not enlarge."""
     if isinstance(long_side, bool) or not isinstance(long_side, int) or long_side < 1:
-        raise RagError(EXIT_USAGE, "視覺長邊必須是正整數。")
+        raise RagError(EXIT_USAGE, t("vision.long_side"))
     if isinstance(quality, bool) or not isinstance(quality, int) or not 1 <= quality <= 95:
-        raise RagError(EXIT_USAGE, "JPEG 質素必須是 1 到 95。")
+        raise RagError(EXIT_USAGE, t("vision.jpeg_quality"))
     frame = _open_raster(png, max_pixels)
     try:
         rgb = _to_rgb(frame)
@@ -159,7 +160,14 @@ def describe_batch(
         four_b_min_bytes=chosen.four_b_min_bytes,
         allow_fallback=chosen.allow_fallback,
     )
-    logger.info("視覺描述 %s 張，模型 %s", sum(item.jpeg is not None for item in prepared), model)
+    logger.info(
+        "%s",
+        t(
+            "log.vision_batch",
+            count=sum(item.jpeg is not None for item in prepared),
+            model=model,
+        ),
+    )
     results: list[CaptionResult | None] = [None] * len(prepared)
     for index, item in enumerate(prepared):
         if item.failure is not None:
@@ -178,7 +186,7 @@ def describe_batch(
     finished: list[CaptionResult] = []
     for result in results:
         if result is None:
-            raise RagError(EXIT_UNCLASSIFIED, "視覺描述沒有完成。")
+            raise RagError(EXIT_UNCLASSIFIED, t("vision.incomplete"))
         finished.append(result)
     return tuple(finished)
 
@@ -194,7 +202,7 @@ def _prepare(image: VisionImage) -> _Prepared:
     try:
         jpeg = jpeg_for_vision(image.png)
     except RagError:
-        logger.warning("圖像 %s 無法縮小。", image.image_id)
+        logger.warning("%s", t("log.image_shrink_failed", image_id=image.image_id))
         return _Prepared(
             image.image_id,
             None,
@@ -228,7 +236,7 @@ def _describe_one(
         paragraph = " ".join(result.content.split())
         if paragraph:
             return CaptionResult(image_id, CAPTION_DONE, paragraph, model)
-    logger.warning("圖像 %s 描述失敗。", image_id)
+    logger.warning("%s", t("log.image_caption_failed", image_id=image_id))
     return CaptionResult(image_id, CAPTION_FAILED, None, model)
 
 
@@ -236,7 +244,7 @@ def _release(client, model: str, body_error: BaseException | None) -> None:
     try:
         client.release_stage(model)
     except RagError:
-        logger.error("卸載 %s 失敗。", model)
+        logger.error("%s", t("log.unload_failed", model=model))
         if body_error is None:
             raise
 
@@ -286,13 +294,13 @@ def _to_rgb(image: Image.Image) -> Image.Image:
 
 def _open_raster(image: bytes | bytearray, max_pixels: int) -> Image.Image:
     if isinstance(max_pixels, bool) or not isinstance(max_pixels, int) or max_pixels < 1:
-        raise RagError(EXIT_USAGE, "max_pixels 必須是正整數。")
+        raise RagError(EXIT_USAGE, t("usage.named_positive_int", name="max_pixels"))
     if not isinstance(image, (bytes, bytearray)) or len(image) == 0:
-        raise RagError(EXIT_UNCLASSIFIED, "圖像無法讀取。")
+        raise RagError(EXIT_UNCLASSIFIED, t("image.decode_failed"))
     raw = bytes(image)
     sniffed = _sniff(raw)
     if sniffed is not None and sniffed[0] * sniffed[1] > max_pixels:
-        raise RagError(EXIT_UNCLASSIFIED, "圖像超過像素上限。")
+        raise RagError(EXIT_UNCLASSIFIED, t("image.exceeds_pixel_limit"))
     _register_heif()
     previous = Image.MAX_IMAGE_PIXELS
     Image.MAX_IMAGE_PIXELS = max_pixels
@@ -303,14 +311,14 @@ def _open_raster(image: bytes | bytearray, max_pixels: int) -> Image.Image:
                 opened.load()
                 frame = opened.copy()
         except Image.DecompressionBombError as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "圖像超過像素上限。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("image.exceeds_pixel_limit")) from exc
         except (UnidentifiedImageError, OSError, ValueError) as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "圖像無法讀取。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("image.decode_failed")) from exc
     finally:
         Image.MAX_IMAGE_PIXELS = previous
     if frame.size[0] < 1 or frame.size[1] < 1 or frame.size[0] * frame.size[1] > max_pixels:
         frame.close()
-        raise RagError(EXIT_UNCLASSIFIED, "圖像超過像素上限。")
+        raise RagError(EXIT_UNCLASSIFIED, t("image.exceeds_pixel_limit"))
     return frame
 
 

@@ -287,4 +287,16 @@ MESSAGES = {
     "status.count_mismatch": (
         "The collection count does not match the embedded count."
     ),
+    "ocr.failed": "OCR failed.",
+    "ocr.result_invalid": "The OCR result format is incorrect.",
+    "ocr.image_unreadable": "Cannot read the OCR image.",
+    "ocr.confidence_range": "ocr.confidence_threshold must be from 0 to 1.",
+    "image.exceeds_pixel_limit": "The image exceeds the pixel limit.",
+    "image.decode_failed": "Cannot read the image.",
+    "vision.long_side": "The vision long side must be a positive integer.",
+    "vision.jpeg_quality": "JPEG quality must be from 1 to 95.",
+    "vision.incomplete": "The vision description did not finish.",
+    "log.vision_batch": "Vision description {count} images, model {model}",
+    "log.image_shrink_failed": "Cannot shrink image {image_id}.",
+    "log.image_caption_failed": "Image {image_id} description failed.",
 }

@@ -107,7 +107,7 @@ def test_engine_failure_is_exit_1_and_hides_the_detail():
     with pytest.raises(RagError) as exc:
         recognize(solid_png(), engine=engine)
     assert exc.value.code == EXIT_UNCLASSIFIED
-    assert exc.value.message == "OCR 失敗。"
+    assert exc.value.message == "OCR failed."
     assert "SECRET_OCR_IMAGE" not in exc.value.message
 
 
@@ -119,14 +119,14 @@ def test_over_pixel_header_is_not_decoded(monkeypatch):
     with pytest.raises(RagError) as exc:
         recognize(png_ihdr(20_000, 20_000), engine=boom)
     assert exc.value.code == EXIT_UNCLASSIFIED
-    assert exc.value.message == "圖像超過像素上限。"
+    assert exc.value.message == "The image exceeds the pixel limit."
 
 
 def test_truncated_png_stays_exit_1():
     with pytest.raises(RagError) as exc:
         recognize(b"\x89PNG\r\n\x1a\ntruncated")
     assert exc.value.code == EXIT_UNCLASSIFIED
-    assert exc.value.message == "OCR 圖像無法讀取。"
+    assert exc.value.message == "Cannot read the OCR image."
 
 
 def test_default_engine_uses_vision_accurate(monkeypatch):

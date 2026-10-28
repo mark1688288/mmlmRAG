@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from PIL import Image, UnidentifiedImageError
 
 from ragcli.errors import EXIT_UNCLASSIFIED, EXIT_USAGE, RagError
+from ragcli.i18n import t
 from ragcli.parse.pixels import sniff_header
 
 LANGUAGES = ("zh-Hant", "zh-Hans", "en-US")
@@ -73,12 +74,12 @@ def recognize(
         except RagError:
             raise
         except Exception as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "OCR 失敗。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("ocr.failed")) from exc
     finally:
         if owns_raster:
             raster.close()
     if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.result_invalid"))
     kept: list[OcrObservation] = []
     for item in raw:
         observation = _observation(item, threshold)
@@ -117,21 +118,21 @@ def _join(items: Sequence[OcrObservation]) -> OcrResult:
 
 def _observation(item: object, threshold: float) -> OcrObservation | None:
     if not isinstance(item, (tuple, list)) or len(item) < 3:
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.result_invalid"))
     text, confidence, bbox = item[0], item[1], item[2]
     if not isinstance(text, str):
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.result_invalid"))
     score = _number(confidence)
     if score is None:
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.result_invalid"))
     if score < threshold:
         return None
     if not isinstance(bbox, (tuple, list)) or len(bbox) < 2:
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.result_invalid"))
     x = _number(bbox[0])
     y = _number(bbox[1])
     if x is None or y is None:
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 結果格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.result_invalid"))
     cleaned = " ".join(text.split())
     if cleaned == "":
         return None
@@ -153,11 +154,11 @@ def _number(value: object) -> float | None:
 
 def _open_raster(image: bytes | bytearray, max_pixels: int) -> Image.Image:
     if not isinstance(image, (bytes, bytearray)) or len(image) == 0:
-        raise RagError(EXIT_UNCLASSIFIED, "OCR 圖像無法讀取。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ocr.image_unreadable"))
     raw = bytes(image)
     sniffed = _sniff(raw)
     if sniffed is not None and sniffed[0] * sniffed[1] > max_pixels:
-        raise RagError(EXIT_UNCLASSIFIED, "圖像超過像素上限。")
+        raise RagError(EXIT_UNCLASSIFIED, t("image.exceeds_pixel_limit"))
     _register_heif()
     previous = Image.MAX_IMAGE_PIXELS
     Image.MAX_IMAGE_PIXELS = max_pixels
@@ -168,14 +169,14 @@ def _open_raster(image: bytes | bytearray, max_pixels: int) -> Image.Image:
                 opened.load()
                 frame = opened.copy()
         except Image.DecompressionBombError as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "圖像超過像素上限。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("image.exceeds_pixel_limit")) from exc
         except (UnidentifiedImageError, OSError, ValueError) as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "OCR 圖像無法讀取。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("ocr.image_unreadable")) from exc
     finally:
         Image.MAX_IMAGE_PIXELS = previous
     if frame.size[0] < 1 or frame.size[1] < 1 or frame.size[0] * frame.size[1] > max_pixels:
         frame.close()
-        raise RagError(EXIT_UNCLASSIFIED, "圖像超過像素上限。")
+        raise RagError(EXIT_UNCLASSIFIED, t("image.exceeds_pixel_limit"))
     return frame
 
 
@@ -198,29 +199,31 @@ def _register_heif() -> None:
 
 def _level(value: str) -> str:
     if value != RECOGNITION_LEVEL:
-        raise RagError(EXIT_USAGE, "ocr.recognition_level 第一版只可以是 accurate。")
+        raise RagError(EXIT_USAGE, t("ocr.recognition_level_invalid"))
     return value
 
 
 def _languages(languages: Sequence[str]) -> tuple[str, ...]:
     if isinstance(languages, str) or not isinstance(languages, Sequence) or not languages:
-        raise RagError(EXIT_USAGE, "ocr.languages 必須是非空字串清單。")
+        raise RagError(EXIT_USAGE, t("ocr.languages_invalid"))
     items: list[str] = []
     for item in languages:
         if not isinstance(item, str) or item == "" or item != item.strip():
-            raise RagError(EXIT_USAGE, "ocr.languages 必須是非空字串清單。")
+            raise RagError(EXIT_USAGE, t("ocr.languages_invalid"))
         items.append(item)
     return tuple(items)
 
 
 def _threshold(value: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise RagError(EXIT_USAGE, "ocr.confidence_threshold 必須是數字。")
+        raise RagError(
+            EXIT_USAGE, t("config.must_be_number", label="ocr.confidence_threshold")
+        )
     if value < 0 or value > 1:
-        raise RagError(EXIT_USAGE, "ocr.confidence_threshold 必須在 0 到 1。")
+        raise RagError(EXIT_USAGE, t("ocr.confidence_range"))
     return float(value)
 
 
 def _pixels(value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise RagError(EXIT_USAGE, "max_pixels 必須是正整數。")
+        raise RagError(EXIT_USAGE, t("usage.named_positive_int", name="max_pixels"))

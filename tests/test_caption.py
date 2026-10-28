@@ -189,7 +189,7 @@ def test_over_pixel_png_is_not_decoded(monkeypatch):
     with pytest.raises(RagError) as exc:
         jpeg_for_vision(png_ihdr(20_000, 20_000))
     assert exc.value.code == EXIT_UNCLASSIFIED
-    assert exc.value.message == "圖像超過像素上限。"
+    assert exc.value.message == "The image exceeds the pixel limit."
 
 
 def test_request_shape_unload_once_and_logs_omit_the_caption(caplog, monkeypatch):
