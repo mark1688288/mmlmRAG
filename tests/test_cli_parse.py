@@ -532,7 +532,7 @@ def test_ingest_text_file_without_models_exits_0(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_OK
-    assert "已入庫 note.txt" in out
+    assert "Ingested note.txt" in out
     assert "你好" not in out
     assert "你好" not in err
     assert "尚未實作" not in err
@@ -606,7 +606,7 @@ def test_ingest_resume_without_path_exits_0(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_OK
-    assert "已繼續入庫" in out
+    assert "Resumed ingest" in out
     assert "尚未實作" not in err
 
 

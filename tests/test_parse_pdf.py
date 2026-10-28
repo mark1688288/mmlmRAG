@@ -284,7 +284,7 @@ def test_encrypted_pdf_is_exit_5(tmp_path: Path) -> None:
     with pytest.raises(RagError) as exc:
         parse_file(path)
     assert exc.value.code == EXIT_DOCUMENT
-    assert "加密" in exc.value.message
+    assert "encrypted" in exc.value.message
 
 
 def test_page_limit_is_exit_5(tmp_path: Path) -> None:

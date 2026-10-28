@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ragcli.errors import EXIT_NOT_FOUND, EXIT_UNSUPPORTED_TYPE, EXIT_USAGE, RagError
+from ragcli.i18n import t
 from ragcli.parse.docx import parse_docx
 from ragcli.parse.image import parse_image
 from ragcli.parse.model import PARSER_VERSION, ParseLimits, ParseResult
@@ -45,18 +46,18 @@ def parse_file(path: Path, limits: ParseLimits | None = None) -> ParseResult:
     try:
         resolved = Path(path).resolve(strict=True)
     except FileNotFoundError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     except OSError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     if resolved.is_dir():
-        raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
+        raise RagError(EXIT_USAGE, t("usage.file_not_directory"))
     if not resolved.is_file():
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}")
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path))
     suffix = resolved.suffix.lower()
     parser = _PARSERS.get(suffix)
     if parser is None:
-        label = suffix if suffix else "（沒有副檔名）"
-        raise RagError(EXIT_UNSUPPORTED_TYPE, f"副檔名不在第一版：{label}")
+        label = suffix if suffix else t("usage.no_suffix")
+        raise RagError(EXIT_UNSUPPORTED_TYPE, t("usage.suffix_unsupported", label=label))
     return parser(resolved, limits)
 
 

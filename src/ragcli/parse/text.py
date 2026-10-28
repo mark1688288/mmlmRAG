@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ragcli.errors import EXIT_DOCUMENT, RagError
+from ragcli.i18n import t
 from ragcli.parse.model import ParseLimits, ParseResult, TextPiece, finish, load_bytes
 
 
@@ -102,5 +103,5 @@ def _charset_normalizer(data: bytes) -> str:
 
     best = from_bytes(data).best()
     if best is None:
-        raise RagError(EXIT_DOCUMENT, "無法判斷文字編碼。")
+        raise RagError(EXIT_DOCUMENT, t("parse.encoding_unknown"))
     return str(best)

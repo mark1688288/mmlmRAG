@@ -54,7 +54,7 @@ def test_header_over_max_pixels_is_exit_5_and_does_not_decode(
     with pytest.raises(RagError) as exc:
         parse_file(path)
     assert exc.value.code == EXIT_DOCUMENT
-    assert "像素" in exc.value.message
+    assert "pixel" in exc.value.message
     assert set(tmp_path.iterdir()) == before
 
 

@@ -37,6 +37,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import t
 from ragcli.images.caption import (
     CAPTION_DONE,
     VisionImage,
@@ -180,7 +181,7 @@ def run_ingest(
     ``available`` replaces the vision memory reading.
     """
     if path is None and not resume:
-        raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
+        raise RagError(EXIT_USAGE, t("usage.file_not_directory"))
     page_cap = config.max_pages if max_pages is None else max_pages
     byte_cap = config.max_bytes if max_bytes is None else max_bytes
     if path is not None:
@@ -249,19 +250,19 @@ def _execute(job: _Job, *, path: Path | None, resume_only: bool) -> int:
         filename = outcome.filename
         reused = outcome.reused
     if missing:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{missing[0]}")
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=missing[0]))
     code = _result_code(job, doc_ids)
     if code == EXIT_OK:
         if resume_only:
-            print("已繼續入庫")
+            print(t("ingest.resumed"))
         elif reused:
-            print(f"已經入庫 {filename}")
+            print(t("ingest.already", filename=filename))
         else:
-            print(f"已入庫 {filename}")
+            print(t("ingest.done", filename=filename))
     elif job.stats.failures or _stored_strict_failure(job, doc_ids):
-        print("有圖像或區塊失敗。", file=_stderr())
+        print(t("ingest.partial_failure"), file=_stderr())
     else:
-        print("沒有可嵌入的區塊。", file=_stderr())
+        print(t("ingest.no_chunks"), file=_stderr())
     return code
 
 
@@ -308,15 +309,15 @@ def _ingest_file(job: _Job, path: Path) -> _FileDone:
         if by_hash.source_path != str(resolved) or by_hash.filename != resolved.name:
             _retarget(job, by_hash, resolved)
             job.store.update_source_path(by_hash.doc_id, str(resolved), resolved.name)
-        logger.info("階段 沿用")
+        logger.info("%s", t("log.stage.reuse"))
         _continue_document(job, by_hash.doc_id)
         return _FileDone(by_hash.doc_id, True, resolved.name)
 
-    logger.info("階段 解析")
+    logger.info("%s", t("log.stage.parse"))
     _probe_if_needed(job, will_parse=True, doc_ids=set())
     result = _parse(resolved, _limits(job))
     if result.document.doc_id != digest:
-        raise RagError(EXIT_UNCLASSIFIED, "解析出的雜湊與檔案不一致。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ingest.hash_mismatch"))
     _guard_no_ocr(job, result.images)
     _require_disk(job.config, job.free_bytes)
     _commit_parse(job, result)
@@ -334,16 +335,16 @@ def _ocr_vision_embed(job: _Job, doc_id: str, contexts: dict[str, int]) -> None:
     images = job.store.images_for_document(doc_id)
     _guard_no_ocr(job, images)
     if any(image.status == "pending_ocr" and not _is_skipped(image) for image in images):
-        logger.info("階段 OCR")
+        logger.info("%s", t("log.stage.ocr"))
         _run_ocr(job, doc_id)
     _insert_image_chunks(job, doc_id, contexts)
     if job.no_vision:
         _apply_no_vision(job, doc_id)
     elif _vision_images(job, doc_id):
-        logger.info("階段 視覺")
+        logger.info("%s", t("log.stage.vision"))
         _run_vision(job, doc_id)
     if not job.no_embed and _pending_for(job, {doc_id}):
-        logger.info("階段 嵌入")
+        logger.info("%s", t("log.stage.embed"))
         _embed(job, {doc_id})
     job.store.refresh_document_status(doc_id)
 
@@ -354,7 +355,7 @@ def _probe_if_needed(job: _Job, *, will_parse: bool, doc_ids: set[str]) -> None:
     check_vision = need_vision and not job.probed_vision
     if not check_embed and not check_vision:
         return
-    logger.info("階段 預檢")
+    logger.info("%s", t("log.stage.preflight"))
     client = _client(job)
     client.version()
     installed = set(client.tags())
@@ -370,8 +371,8 @@ def _probe_if_needed(job: _Job, *, will_parse: bool, doc_ids: set[str]) -> None:
                 if name not in missing:
                     missing.append(name)
     if missing:
-        shown = "、".join(missing)
-        raise RagError(EXIT_MODEL_MISSING, f"缺少模型 {shown}。請執行 rag models pull。")
+        names = t("ollama.list_joiner").join(missing)
+        raise RagError(EXIT_MODEL_MISSING, t("ollama.model_missing", names=names))
     if check_embed:
         job.probed_embed = True
     if check_vision:
@@ -447,7 +448,7 @@ def _run_ocr(job: _Job, doc_id: str) -> None:
 def _insert_image_chunks(job: _Job, doc_id: str, contexts: dict[str, int]) -> None:
     document = job.store.get_document(doc_id)
     if document is None:
-        raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+        raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
     chunks = job.store.chunks_for_document(doc_id)
     occupied = {chunk.image_id for chunk in chunks if chunk.image_id}
     ordinal = max((chunk.ordinal for chunk in chunks), default=-1) + 1
@@ -491,7 +492,7 @@ def _insert_image_chunks(job: _Job, doc_id: str, contexts: dict[str, int]) -> No
             )
             ordinal += 1
     if created:
-        logger.info("階段 圖像區塊")
+        logger.info("%s", t("log.stage.image_chunks"))
         job.store.insert_chunks(created)
 
 
@@ -556,7 +557,7 @@ def _apply_caption(
 ) -> None:
     image = job.store.get_image(image_id)
     if image is None:
-        raise RagError(EXIT_NOT_FOUND, "找不到圖像。")
+        raise RagError(EXIT_NOT_FOUND, t("store.image_missing"))
     blocked = [
         chunk
         for chunk in job.store.chunks_for_document(image.doc_id)
@@ -598,7 +599,7 @@ def _embed(job: _Job, doc_ids: set[str]) -> None:
     client = _client(job)
     model, dimensions, num_ctx, native = _embed_target(job)
     if dimensions > native:
-        raise RagError(EXIT_MISMATCH, "作用中維度大於嵌入模型的原生寬度。")
+        raise RagError(EXIT_MISMATCH, t("ingest.dimensions_exceed_native"))
     job.stats.model_name = model
     body_error: BaseException | None = None
     with ollama_lock(job.config.data_dir, timeout=job.lock_timeout):
@@ -646,12 +647,12 @@ def _embed_batch(
     active = job.store.get_active()
     expected = collection_name(model, dimensions)
     if active is not None and active.collection != expected:
-        raise RagError(EXIT_MISMATCH, "嵌入寫入的集合不是作用中集合。")
+        raise RagError(EXIT_MISMATCH, t("ingest.collection_mismatch"))
     records: list[IndexRecord] = []
     for chunk, vector in zip(batch, vectors, strict=True):
         document = job.store.get_document(chunk.doc_id)
         if document is None:
-            raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+            raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
         records.append(_index_record(chunk, document, vector))
     name = job.index.upsert(
         records,
@@ -659,9 +660,9 @@ def _embed_batch(
         dimensions=dimensions,
         embed_num_ctx=num_ctx,
     )
-    logger.info("集合 %s", name)
+    logger.info("%s", t("log.collection", name=name))
     if name != expected:
-        raise RagError(EXIT_MISMATCH, "嵌入寫入的集合不是作用中集合。")
+        raise RagError(EXIT_MISMATCH, t("ingest.collection_mismatch"))
     if active is None:
         job.store.set_active(
             ActiveIndex(
@@ -698,7 +699,7 @@ def _native_dim(config: Config, model: str) -> int:
         return config.embed_native_dimensions
     if model in _KNOWN_NATIVE:
         return _KNOWN_NATIVE[model]
-    raise RagError(EXIT_MISMATCH, "未知嵌入模型需要 native 寬度。")
+    raise RagError(EXIT_MISMATCH, t("ingest.native_width_required"))
 
 
 def _active_embed_model(job: _Job) -> str:
@@ -722,14 +723,14 @@ def _reject_generators(job: _Job, client: OllamaClient) -> None:
         for item in loaded:
             client.unload_model(item.name)
     if any(item.name in names for item in client.ps()):
-        raise RagError(EXIT_RESOURCES, "卸載後仍有生成模型。")
+        raise RagError(EXIT_RESOURCES, t("ingest.generator_still_loaded"))
 
 
 def _release_embed(client: OllamaClient, model: str, body_error: BaseException | None) -> None:
     try:
         client.release_stage(model)
     except RagError:
-        logger.error("卸載 %s 失敗。", model)
+        logger.error("%s", t("log.unload_failed", model=model))
         if body_error is None:
             raise
 
@@ -837,7 +838,7 @@ def _guard_no_ocr(job: _Job, images: Sequence[ParsedImage | ImageRecord]) -> Non
         return
     live = [image for image in images if not _is_skipped(image)]
     if len(live) > NO_OCR_IMAGE_LIMIT:
-        raise RagError(EXIT_USAGE, "--no-ocr 時圖像超過 20 張。")
+        raise RagError(EXIT_USAGE, t("ingest.no_ocr_image_limit"))
 
 
 def _is_skipped(image: ParsedImage | ImageRecord) -> bool:
@@ -962,23 +963,23 @@ def _check_file(path: Path, max_bytes: int) -> Path:
     try:
         resolved = Path(path).expanduser().resolve(strict=True)
     except FileNotFoundError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     except OSError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     if not _readable_file(resolved):
         if resolved.is_dir():
-            raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{resolved}")
+            raise RagError(EXIT_USAGE, t("usage.file_not_directory"))
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=resolved))
     suffix = resolved.suffix.lower()
     if suffix not in _SUFFIXES:
-        label = suffix if suffix else "（沒有副檔名）"
-        raise RagError(EXIT_UNSUPPORTED_TYPE, f"副檔名不在第一版：{label}")
+        label = suffix if suffix else t("usage.no_suffix")
+        raise RagError(EXIT_UNSUPPORTED_TYPE, t("usage.suffix_unsupported", label=label))
     try:
         size = resolved.stat().st_size
     except OSError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{resolved}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=resolved)) from exc
     if size > max_bytes:
-        raise RagError(EXIT_DOCUMENT, "檔案超過位元組上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.bytes_exceeded"))
     return resolved
 
 
@@ -1001,11 +1002,11 @@ def _require_disk(config: Config, free_bytes: Callable[[], int] | None) -> None:
     else:
         free = free_bytes()
     if isinstance(free, bool) or not isinstance(free, int):
-        raise RagError(EXIT_DISK, "讀不到磁碟剩餘空間。")
+        raise RagError(EXIT_DISK, t("disk.free_unreadable"))
     if free < config.min_free_bytes:
         raise RagError(
             EXIT_DISK,
-            f"磁碟剩餘 {free} 位元組，少於 {config.min_free_bytes}。",
+            t("disk.free_below", free=free, minimum=config.min_free_bytes),
         )
 
 
@@ -1014,19 +1015,19 @@ def _read_image(job: _Job, doc_id: str, image_id: str) -> bytes:
     try:
         return path.read_bytes()
     except OSError as exc:
-        raise RagError(EXIT_UNCLASSIFIED, "讀不到圖像檔。") from exc
+        raise RagError(EXIT_UNCLASSIFIED, t("image.unreadable")) from exc
 
 
 def _note_failure(job: _Job, image_id: str, status: str) -> None:
     job.stats.failures.append((image_id, status))
-    logger.warning("圖像 %s 狀態 %s", image_id, status)
-    print(f"圖像 {image_id} 狀態 {status}", file=_stderr())
+    logger.warning("%s", t("image.status", image_id=image_id, status=status))
+    print(t("image.status", image_id=image_id, status=status), file=_stderr())
 
 
 def _note_embed_failure(job: _Job, chunk_id: str) -> None:
     job.stats.failures.append((chunk_id, "embed"))
-    logger.warning("區塊 %s 嵌入失敗。", chunk_id)
-    print(f"區塊 {chunk_id} 嵌入失敗。", file=_stderr())
+    logger.warning("%s", t("ingest.chunk_embed_failed", chunk_id=chunk_id))
+    print(t("ingest.chunk_embed_failed", chunk_id=chunk_id), file=_stderr())
 
 
 def _client(job: _Job) -> OllamaClient:
@@ -1052,7 +1053,7 @@ def _begin_run(store: SqliteStore, clock: Callable[[], str] | None) -> str:
 
 
 def _finish_run(job: _Job, run_id: str, code: int) -> None:
-    logger.info("結束碼 %s", code)
+    logger.info("%s", t("log.exit_code", code=code))
     job.store.finish_run(
         run_id,
         finished_at=_now(job.clock),

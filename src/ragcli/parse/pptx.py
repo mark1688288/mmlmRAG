@@ -13,6 +13,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from ragcli.errors import EXIT_DOCUMENT, RagError
+from ragcli.i18n import t
 from ragcli.parse.docx import _classify
 from ragcli.parse.model import ParseLimits, ParseResult, Segment, TextPiece, finish, load_bytes
 
@@ -24,9 +25,9 @@ def parse_pptx(path: Path, limits: ParseLimits | None = None) -> ParseResult:
     try:
         presentation = Presentation(str(resolved))
     except Exception as exc:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。") from exc
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt")) from exc
     if len(presentation.slides) > limits.max_pages:
-        raise RagError(EXIT_DOCUMENT, "頁數超過上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.page_limit"))
     segments: list[Segment] = []
     for index, slide in enumerate(presentation.slides, start=1):
         _read_slide(slide, index, segments, limits)
@@ -76,7 +77,7 @@ def _shapes(shapes, page: int, segments: list[Segment], limits: ParseLimits, sec
             try:
                 blob = shape.image.blob
             except Exception as exc:
-                raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。") from exc
+                raise RagError(EXIT_DOCUMENT, t("parse.corrupt")) from exc
             segments.append(_classify(blob, page=page, limits=limits, locator=f"pptx:{page}"))
     flush()
 

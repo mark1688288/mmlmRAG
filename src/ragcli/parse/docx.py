@@ -15,6 +15,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from ragcli.errors import EXIT_DOCUMENT, RagError
+from ragcli.i18n import t
 from ragcli.parse.model import (
     BombImage,
     EncodedImage,
@@ -44,7 +45,7 @@ def parse_docx(path: Path, limits: ParseLimits | None = None) -> ParseResult:
     try:
         document = Document(str(resolved))
     except Exception as exc:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。") from exc
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt")) from exc
     segments: list[Segment] = []
     buffer: list[str] = []
     section: str | None = None
@@ -123,7 +124,7 @@ def _paragraph_events(paragraph: Paragraph, document: Document) -> list[tuple[st
                 continue
             part = document.part.related_parts.get(embed)
             if part is None:
-                raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+                raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
             seen.add(embed)
             flush_text()
             events.append(("image", part.blob))
@@ -158,7 +159,7 @@ def _blobs(element, document: Document) -> list[bytes]:
             continue
         part = document.part.related_parts.get(embed)
         if part is None:
-            raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+            raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
         seen.add(embed)
         blobs.append(part.blob)
     return blobs
@@ -167,7 +168,7 @@ def _blobs(element, document: Document) -> list[bytes]:
 def _classify(raw: bytes, *, page: int | None, limits: ParseLimits, locator: str):
     sniffed = sniff_header(raw)
     if sniffed is None:
-        raise RagError(EXIT_DOCUMENT, "圖像格式無法在解碼前讀到尺寸。")
+        raise RagError(EXIT_DOCUMENT, t("image.dimensions_unreadable"))
     width, height = sniffed
     if width * height > limits.max_pixels:
         return BombImage(width, height, page, "embedded", locator)

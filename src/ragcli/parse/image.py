@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ragcli.errors import EXIT_DOCUMENT, RagError
+from ragcli.i18n import t
 from ragcli.parse.model import EncodedImage, ParseLimits, ParseResult, finish, load_bytes
 from ragcli.parse.pixels import header_size
 
@@ -25,10 +26,10 @@ def parse_image(path: Path, limits: ParseLimits | None = None) -> ParseResult:
     resolved, data = load_bytes(path, limits.max_bytes)
     suffix = resolved.suffix.lower()
     if suffix not in _SUFFIXES:
-        raise RagError(EXIT_DOCUMENT, "圖像格式無法在解碼前讀到尺寸。")
+        raise RagError(EXIT_DOCUMENT, t("image.dimensions_unreadable"))
     width, height = header_size(data, suffix)
     if width * height > limits.max_pixels:
-        raise RagError(EXIT_DOCUMENT, "圖像像素超過上限。")
+        raise RagError(EXIT_DOCUMENT, t("image.pixels_exceeded"))
     return finish(
         resolved=resolved,
         data=data,

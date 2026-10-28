@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ragcli.chunking import chunk_text
 from ragcli.errors import EXIT_DOCUMENT, EXIT_NOT_FOUND, EXIT_USAGE, RagError
+from ragcli.i18n import t
 from ragcli.parse.pixels import (
     PixelOverflow,
     is_decorative,
@@ -43,7 +44,7 @@ class ParseLimits:
         for name in ("max_pages", "max_bytes", "max_pixels", "max_images"):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
-                raise RagError(EXIT_USAGE, f"{name} 必須是正整數。")
+                raise RagError(EXIT_USAGE, t("usage.named_positive_int", name=name))
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,25 +164,25 @@ def load_bytes(path: Path, max_bytes: int) -> tuple[Path, bytes]:
     try:
         resolved = path.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     except OSError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     if resolved.is_dir():
-        raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
+        raise RagError(EXIT_USAGE, t("usage.file_not_directory"))
     if not resolved.is_file():
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}")
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path))
     try:
         size = resolved.stat().st_size
     except OSError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     if size > max_bytes:
-        raise RagError(EXIT_DOCUMENT, "檔案超過位元組上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.bytes_exceeded"))
     try:
         data = resolved.read_bytes()
     except OSError as exc:
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}") from exc
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path)) from exc
     if len(data) > max_bytes:
-        raise RagError(EXIT_DOCUMENT, "檔案超過位元組上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.bytes_exceeded"))
     return resolved, data
 
 
@@ -213,9 +214,9 @@ def finish(
 ) -> ParseResult:
     """Turn reading-order segments into chunks and image records."""
     if media_type not in MEDIA_TYPES:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     if parser not in PARSER_NAMES:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     digest = hashlib.sha256(data).hexdigest()
     document = ParsedDocument(
         doc_id=digest,
@@ -239,7 +240,7 @@ def finish(
             ordinal = _append_text(document.doc_id, segment, chunks, ordinal)
             continue
         if image_ordinal >= limits.max_images:
-            raise RagError(EXIT_DOCUMENT, "圖像張數超過上限。")
+            raise RagError(EXIT_DOCUMENT, t("parse.image_count"))
         record = _image_record(
             document.doc_id,
             image_ordinal,
@@ -317,7 +318,7 @@ def _image_record(
         raw = segment.raw
         if width * height > limits.max_pixels:
             if kind == "standalone":
-                raise RagError(EXIT_DOCUMENT, "圖像像素超過上限。")
+                raise RagError(EXIT_DOCUMENT, t("image.pixels_exceeded"))
             return _bomb(
                 doc_id,
                 image_id,
@@ -343,7 +344,7 @@ def _image_record(
             png, width, height = to_png(raw, max_pixels=limits.max_pixels)
         except PixelOverflow:
             if kind == "standalone":
-                raise RagError(EXIT_DOCUMENT, "圖像像素超過上限。") from None
+                raise RagError(EXIT_DOCUMENT, t("image.pixels_exceeded")) from None
             return _bomb(
                 doc_id,
                 image_id,
@@ -408,7 +409,7 @@ def _confirmed_size(segment: EncodedImage) -> tuple[int, int]:
     sniffed = sniff_header(segment.raw)
     width, height = sniffed if sniffed is not None else (segment.width, segment.height)
     if width < 1 or height < 1:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return width, height
 
 
@@ -421,7 +422,7 @@ def _maybe_shrink(
     try:
         return to_png(png, max_pixels=limits.max_pixels)
     except PixelOverflow as exc:
-        raise RagError(EXIT_DOCUMENT, "頁面在 72 DPI 仍超過像素上限。") from exc
+        raise RagError(EXIT_DOCUMENT, t("parse.page_pixels")) from exc
 
 
 def _bomb(

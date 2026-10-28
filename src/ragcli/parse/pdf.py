@@ -14,6 +14,7 @@ from pathlib import Path
 import pymupdf
 
 from ragcli.errors import EXIT_DOCUMENT, RagError
+from ragcli.i18n import t
 from ragcli.parse.model import (
     BombImage,
     EncodedImage,
@@ -41,11 +42,11 @@ def parse_pdf(path: Path, limits: ParseLimits | None = None) -> ParseResult:
     try:
         document = pymupdf.open(stream=data, filetype="pdf")
     except Exception as exc:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。") from exc
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt")) from exc
     try:
         _reject_password(document)
         if document.page_count > limits.max_pages:
-            raise RagError(EXIT_DOCUMENT, "頁數超過上限。")
+            raise RagError(EXIT_DOCUMENT, t("parse.page_limit"))
         segments: list[Segment] = []
         for index in range(document.page_count):
             _read_page(document, document.load_page(index), index + 1, segments, limits)
@@ -79,7 +80,7 @@ def plan_raster(
     Exit 5 when 72 DPI is still over ``max_pixels``.
     """
     if width_pt <= 0 or height_pt <= 0:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
 
     def pixels(dpi: int) -> tuple[int, int]:
         width = max(1, math.ceil(width_pt * dpi / 72))
@@ -108,13 +109,13 @@ def plan_raster(
         return chosen, width, height
     width, height = pixels(floor_dpi)
     if width * height > max_pixels:
-        raise RagError(EXIT_DOCUMENT, "頁面在 72 DPI 仍超過像素上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.page_pixels"))
     return floor_dpi, width, height
 
 
 def _reject_password(document: pymupdf.Document) -> None:
     if document.needs_pass and not document.authenticate(""):
-        raise RagError(EXIT_DOCUMENT, "加密的 PDF 不接受密碼。")
+        raise RagError(EXIT_DOCUMENT, t("parse.pdf_encrypted"))
 
 
 def _title(document: pymupdf.Document) -> str | None:
@@ -165,7 +166,7 @@ def _embedded(
     width = int(info[2])
     height = int(info[3])
     if width < 1 or height < 1:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     if width * height > limits.max_pixels:
         segments.append(
             BombImage(width, height, page_no, "embedded", f"pdf:{page_no}:{xref}")
@@ -174,7 +175,7 @@ def _embedded(
     extracted = document.extract_image(xref)
     raw = extracted.get("image") if isinstance(extracted, dict) else None
     if not isinstance(raw, (bytes, bytearray)) or not raw:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     raw = bytes(raw)
     sniffed = sniff_header(raw)
     if sniffed is not None and sniffed[0] * sniffed[1] > limits.max_pixels:
@@ -203,10 +204,10 @@ def _render(
         max_pixels=limits.max_pixels,
     )
     if width * height > limits.max_pixels:
-        raise RagError(EXIT_DOCUMENT, "頁面在 72 DPI 仍超過像素上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.page_pixels"))
     pixmap = page.get_pixmap(dpi=_dpi, alpha=False, colorspace=pymupdf.csRGB)
     if pixmap.width * pixmap.height > limits.max_pixels:
-        raise RagError(EXIT_DOCUMENT, "頁面在 72 DPI 仍超過像素上限。")
+        raise RagError(EXIT_DOCUMENT, t("parse.page_pixels"))
     return RasterImage(
         png=pixmap.tobytes("png"),
         width=pixmap.width,
@@ -221,7 +222,7 @@ def _page_text(page: pymupdf.Page) -> str:
     try:
         data = page.get_text("dict", flags=_TEXT_FLAGS)
     except Exception as exc:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。") from exc
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt")) from exc
     used: set[int] = set()
     parts: list[str] = []
     for block in data.get("blocks", []):

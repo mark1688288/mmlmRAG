@@ -14,6 +14,7 @@ import math
 from PIL import Image, UnidentifiedImageError
 
 from ragcli.errors import EXIT_DOCUMENT, RagError
+from ragcli.i18n import t
 
 DECOR_MIN_SIDE = 32
 DECOR_BOTH_UNDER = 96
@@ -67,7 +68,7 @@ def header_size(data: bytes, suffix: str) -> tuple[int, int]:
     """Read width and height for one standalone suffix. Does not decode pixels."""
     reader = _READERS.get(suffix)
     if reader is None:
-        raise RagError(EXIT_DOCUMENT, "圖像格式無法在解碼前讀到尺寸。")
+        raise RagError(EXIT_DOCUMENT, t("image.dimensions_unreadable"))
     return reader(data)
 
 
@@ -108,7 +109,7 @@ def to_png(raw: bytes, *, max_pixels: int) -> tuple[bytes, int, int]:
         except Image.DecompressionBombError as exc:
             raise PixelOverflow from exc
         except (UnidentifiedImageError, OSError, ValueError) as exc:
-            raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。") from exc
+            raise RagError(EXIT_DOCUMENT, t("parse.corrupt")) from exc
     finally:
         Image.MAX_IMAGE_PIXELS = previous
     width, height = working.size
@@ -122,18 +123,18 @@ def to_png(raw: bytes, *, max_pixels: int) -> tuple[bytes, int, int]:
 
 def png_size(data: bytes) -> tuple[int, int]:
     if len(data) < 24 or not data.startswith(_PNG_SIG) or data[12:16] != b"IHDR":
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return _positive(data[16:20], data[20:24], "big")
 
 
 def jpeg_size(data: bytes) -> tuple[int, int]:
     if len(data) < 4 or data[0:2] != b"\xff\xd8":
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     index = 2
     length = len(data)
     while index < length:
         if data[index] != 0xFF:
-            raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+            raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
         index += 1
         while index < length and data[index] == 0xFF:
             index += 1
@@ -149,56 +150,56 @@ def jpeg_size(data: bytes) -> tuple[int, int]:
             break
         segment = int.from_bytes(data[index : index + 2], "big")
         if segment < 2 or index + segment > length:
-            raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+            raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
         if marker == 0xDA:
             break
         if marker in _JPEG_SOF:
             if segment < 7:
-                raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+                raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
             height = int.from_bytes(data[index + 3 : index + 5], "big")
             width = int.from_bytes(data[index + 5 : index + 7], "big")
             if width < 1 or height < 1:
-                raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+                raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
             return width, height
         index += segment
-    raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+    raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
 
 
 def gif_size(data: bytes) -> tuple[int, int]:
     """Logical screen size. Only the first frame is decoded later."""
     if len(data) < 10 or data[:6] not in (b"GIF87a", b"GIF89a"):
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return _positive(data[6:8], data[8:10], "little")
 
 
 def webp_size(data: bytes) -> tuple[int, int]:
     if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     chunk = data[12:16]
     if chunk == b"VP8X":
         width = 1 + int.from_bytes(data[24:27], "little")
         height = 1 + int.from_bytes(data[27:30], "little")
     elif chunk == b"VP8 ":
         if data[23:26] != b"\x9d\x01\x2a":
-            raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+            raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
         width = int.from_bytes(data[26:28], "little") & 0x3FFF
         height = int.from_bytes(data[28:30], "little") & 0x3FFF
     elif chunk == b"VP8L":
         if data[20] != 0x2F:
-            raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+            raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
         bits = int.from_bytes(data[21:25], "little")
         width = (bits & 0x3FFF) + 1
         height = ((bits >> 14) & 0x3FFF) + 1
     else:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     if width < 1 or height < 1:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return width, height
 
 
 def bmp_size(data: bytes) -> tuple[int, int]:
     if len(data) < 26 or data[:2] != b"BM":
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     header = int.from_bytes(data[14:18], "little")
     if header == 12:
         width = int.from_bytes(data[18:20], "little")
@@ -207,25 +208,25 @@ def bmp_size(data: bytes) -> tuple[int, int]:
         width = int.from_bytes(data[18:22], "little", signed=True)
         height = abs(int.from_bytes(data[22:26], "little", signed=True))
     if width < 1 or height < 1:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return width, height
 
 
 def tiff_size(data: bytes) -> tuple[int, int]:
     """Width and height from the first IFD. Later frames are ignored."""
     if len(data) < 8:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     if data[:2] == b"II":
         order = "little"
     elif data[:2] == b"MM":
         order = "big"
     else:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     if int.from_bytes(data[2:4], order) != 42:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     offset = int.from_bytes(data[4:8], order)
     if offset < 0 or offset + 2 > len(data):
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     count = int.from_bytes(data[offset : offset + 2], order)
     width = None
     height = None
@@ -245,17 +246,17 @@ def tiff_size(data: bytes) -> tuple[int, int]:
                 height = value
         entry += 12
     if width is None or height is None or width < 1 or height < 1:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return width, height
 
 
 def heif_size(data: bytes) -> tuple[int, int]:
     """Largest ``ispe`` box. The largest canvas is the bomb check."""
     if len(data) < 12 or data[4:8] != b"ftyp" or not _heif_brand(data):
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     found = _largest_ispe(data, 0, len(data))
     if found is None:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return found
 
 
@@ -308,14 +309,14 @@ def _tiff_inline(field: bytes, kind: int, order: str) -> int:
         return int.from_bytes(field[:2], order)
     if kind == 4:
         return int.from_bytes(field[:4], order)
-    raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+    raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
 
 
 def _positive(width_bytes: bytes, height_bytes: bytes, order: str) -> tuple[int, int]:
     width = int.from_bytes(width_bytes, order)
     height = int.from_bytes(height_bytes, order)
     if width < 1 or height < 1:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return width, height
 
 
@@ -337,7 +338,7 @@ def _shrink(image: Image.Image, width: int, height: int) -> tuple[int, int, Imag
         max(1, math.floor(height * scale)),
     )
     if max(resized) > MAX_LONG_SIDE:
-        raise RagError(EXIT_DOCUMENT, "檔案已損壞，無法解析。")
+        raise RagError(EXIT_DOCUMENT, t("parse.corrupt"))
     return resized[0], resized[1], image.resize(resized, Image.Resampling.LANCZOS)
 
 

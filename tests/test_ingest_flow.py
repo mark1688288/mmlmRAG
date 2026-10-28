@@ -407,13 +407,13 @@ def test_docx_runs_seven_stages_in_order(tmp_path, monkeypatch, capsys):
         assert hidden not in log
         assert hidden not in captured.out
         assert hidden not in captured.err
-    assert "階段 預檢" in log
-    assert "階段 解析" in log
-    assert "階段 OCR" in log
-    assert "階段 圖像區塊" in log
-    assert "階段 視覺" in log
-    assert "階段 嵌入" in log
-    assert "已入庫 note.docx" in captured.out
+    assert "Stage preflight" in log
+    assert "Stage parse" in log
+    assert "Stage OCR" in log
+    assert "Stage image chunks" in log
+    assert "Stage vision" in log
+    assert "Stage embed" in log
+    assert "Ingested note.docx" in captured.out
 
 
 def json_body(request: httpx.Request):
@@ -504,10 +504,10 @@ def test_label_failure_keeps_the_chunk(tmp_path, capsys, strict, expected):
     finally:
         store.close()
     if strict:
-        assert "有圖像或區塊失敗" in captured.err
-        assert "已入庫" not in captured.out
+        assert "An image or chunk failed" in captured.err
+        assert "Ingested" not in captured.out
     else:
-        assert "已入庫 note.docx" in captured.out
+        assert "Ingested note.docx" in captured.out
 
 
 def test_parser_version_change_reparses_and_drops_old_ids(tmp_path, monkeypatch):
@@ -690,12 +690,12 @@ def test_empty_text_exits_8_twice(tmp_path, capsys):
     fake = IngestFake()
     assert run(config, fake, path, no_vision=True) == EXIT_NO_CHUNKS
     first = capsys.readouterr()
-    assert "沒有可嵌入的區塊" in first.err
-    assert "已經入庫" not in first.out
+    assert "No chunks to embed" in first.err
+    assert "Already ingested" not in first.out
     assert run(config, fake, path, no_vision=True) == EXIT_NO_CHUNKS
     second = capsys.readouterr()
-    assert "沒有可嵌入的區塊" in second.err
-    assert "已經入庫" not in second.out
+    assert "No chunks to embed" in second.err
+    assert "Already ingested" not in second.out
     store = open_store(config)
     try:
         documents = store.list_documents()
@@ -714,7 +714,7 @@ def test_png_without_ocr_or_vision_exits_8(tmp_path, capsys):
     code = run(config, fake, path, no_ocr=True, no_vision=True)
     captured = capsys.readouterr()
     assert code == EXIT_NO_CHUNKS
-    assert "有圖像或區塊失敗" in captured.err
+    assert "An image or chunk failed" in captured.err
     assert "/api/chat" not in fake.paths()
     store = open_store(config)
     try:
@@ -770,7 +770,7 @@ def test_no_ocr_rejects_more_than_20_images_before_commit(tmp_path, monkeypatch)
     with pytest.raises(RagError) as exc:
         run(config, fake, path, no_ocr=True, no_embed=True, no_vision=True)
     assert exc.value.code == EXIT_USAGE
-    assert exc.value.message == "--no-ocr 時圖像超過 20 張。"
+    assert exc.value.message == "More than 20 images with --no-ocr."
     assert fake.seen == []
     store = open_store(config)
     try:
@@ -979,14 +979,14 @@ def test_same_hash_updates_a_moved_path_without_reparsing(tmp_path, monkeypatch,
     calls = count_parse(monkeypatch)
     fake = IngestFake()
     assert run(config, fake, path, no_vision=True) == EXIT_OK
-    assert "已入庫 note.txt" in capsys.readouterr().out
+    assert "Ingested note.txt" in capsys.readouterr().out
     assert run(config, fake, path, no_vision=True) == EXIT_OK
-    assert "已經入庫 note.txt" in capsys.readouterr().out
+    assert "Already ingested note.txt" in capsys.readouterr().out
     moved = tmp_path / "moved-note.txt"
     path.rename(moved)
     assert run(config, fake, moved, no_vision=True) == EXIT_OK
     assert calls["n"] == 1
-    assert "已經入庫 moved-note.txt" in capsys.readouterr().out
+    assert "Already ingested moved-note.txt" in capsys.readouterr().out
     store = open_store(config)
     index = ChromaIndex.open(config.data_dir)
     try:
@@ -1045,9 +1045,9 @@ def test_no_model_flags_do_not_call_ollama_or_log_the_body(tmp_path, capsys):
     assert sentence not in log
     assert sentence not in captured.out
     assert sentence not in captured.err
-    assert "階段 解析" in log
+    assert "Stage parse" in log
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
-    assert "已入庫 note.txt" in captured.out
+    assert "Ingested note.txt" in captured.out
 
 
 def test_skipped_bomb_does_not_call_ocr(tmp_path, monkeypatch):
@@ -1111,5 +1111,5 @@ def test_stuck_generator_exits_13_before_embed(tmp_path):
     with pytest.raises(RagError) as exc:
         run(config, fake, path, no_vision=True)
     assert exc.value.code == EXIT_RESOURCES
-    assert "卸載後仍有生成模型" in exc.value.message
+    assert "generator model is still loaded" in exc.value.message
     assert fake.document_inputs() == []
