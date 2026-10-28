@@ -3,7 +3,7 @@
 `data_dir` in the file is relative to the directory that contains that file.
 `--data-dir` is relative to the current working directory. Ollama URLs must
 use the hosts 127.0.0.1, localhost, or ::1. There is no setting that turns
-thinking on.
+thinking on. `[ui] language` is optional and is only `en` or `zh`.
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ragcli.errors import EXIT_USAGE, RagError
+from ragcli.i18n import t
+
+_UI_LANGUAGES = frozenset({"en", "zh"})
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -51,12 +54,14 @@ _SECTIONS: dict[str, frozenset[str]] = {
             "four_b_min_bytes",
         }
     ),
+    "ui": frozenset({"language"}),
 }
 
 
 @dataclass(frozen=True)
 class Config:
     config_path: Path
+    ui_language: str
     data_dir: Path
     ollama_base_url: str
     embed_model: str
@@ -96,8 +101,14 @@ def load_config(
     data_dir: Path | None = None,
     *,
     cwd: Path | None = None,
+    language_from_flag: str | None = None,
 ) -> Config:
-    """Load and validate configuration. Does not create directories."""
+    """Load and validate configuration. Does not create directories.
+
+    `language_from_flag` is the language `--lang` already chose. When it is
+    `en` or `zh`, an illegal `[ui] language` is left unused. This function
+    does not change the active catalog language.
+    """
     work_dir = (cwd or Path.cwd()).resolve()
     path = _locate_config(config_path, work_dir)
     raw = _read_toml(path)
@@ -110,6 +121,7 @@ def load_config(
     chunk = tables["chunk"]
     ocr = tables["ocr"]
     limits = tables["limits"]
+    ui = tables["ui"]
 
     if data_dir is None:
         data_raw = _string(paths, "data_dir", "data", "paths.data_dir")
@@ -128,6 +140,7 @@ def load_config(
 
     return Config(
         config_path=path,
+        ui_language=_adopt_ui_language(ui, language_from_flag),
         data_dir=_resolve_dir(data_raw, data_base),
         ollama_base_url=normalize_base_url(
             _string(
@@ -212,6 +225,7 @@ def format_config(config: Config) -> str:
     """Render the resolved configuration. The file has no secret fields."""
     lines = [
         f"config_path={config.config_path}",
+        f"ui.language={config.ui_language}",
         f"data_dir={config.data_dir}",
         f"ollama.base_url={config.ollama_base_url}",
         f"embed.model={config.embed_model}",
@@ -274,6 +288,60 @@ def normalize_base_url(url: str) -> str:
 
 def _reject_url(url: str) -> str:
     return f"Ollama 只接受迴路地址（127.0.0.1、localhost、::1），拒絕：{url}"
+
+
+def peek_ui_language(
+    config_path: Path | None = None,
+    *,
+    cwd: Path | None = None,
+) -> object:
+    """Return the raw `[ui] language` value, or None when it is absent.
+
+    Lookup matches `load_config`: `--config` uses `_resolve_user_path`,
+    and otherwise `_find_config` walks parents for `rag.toml`. A missing
+    file, a path that is not a file, an unreadable file, or invalid TOML is
+    an absent value. Unknown sections are ignored. The value is not stripped.
+    """
+    work_dir = (cwd or Path.cwd()).resolve()
+    try:
+        path = _locate_config(config_path, work_dir)
+    except RagError:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+        raw = tomllib.loads(text)
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    ui = raw.get("ui")
+    if not isinstance(ui, dict) or "language" not in ui:
+        return None
+    return ui["language"]
+
+
+def _adopt_ui_language(table: dict, language_from_flag: str | None) -> str:
+    if language_from_flag is not None:
+        if language_from_flag not in _UI_LANGUAGES:
+            raise RagError(
+                EXIT_USAGE,
+                t(
+                    "usage.language_invalid",
+                    value=language_from_flag,
+                    source="--lang",
+                ),
+            )
+        return language_from_flag
+    if "language" not in table:
+        return "en"
+    raw = table["language"]
+    if isinstance(raw, str) and raw in _UI_LANGUAGES:
+        return raw
+    label = raw if isinstance(raw, str) else type(raw).__name__
+    raise RagError(
+        EXIT_USAGE,
+        t("usage.language_invalid", value=label, source="ui.language"),
+    )
 
 
 def _locate_config(config_path: Path | None, work_dir: Path) -> Path:

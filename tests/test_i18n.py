@@ -53,6 +53,30 @@ def test_file_not_directory_in_both_languages():
     assert t("usage.file_not_directory") == EN_FILE
 
 
+def test_language_switch_messages():
+    assert t("help.lang") == "Interface language, en or zh. Overrides ui.language"
+    assert t("usage.language_invalid", value="fr", source="--lang") == (
+        "Invalid language fr for --lang. Use en or zh."
+    )
+    assert t("usage.language_invalid", value="zh ", source="ui.language") == (
+        "Invalid language zh  for ui.language. Use en or zh."
+    )
+    assert t("log.ui_language", language="en", source="default") == (
+        "Interface language en from default."
+    )
+    set_language("zh")
+    assert t("help.lang") == "介面語言，en 或 zh。覆蓋 ui.language"
+    assert t("usage.language_invalid", value="", source="--lang") == (
+        "語言值無效：（--lang）。只可以是 en 或 zh。"
+    )
+    assert t("usage.language_invalid", value="zh ", source="ui.language") == (
+        "語言值無效：zh （ui.language）。只可以是 en 或 zh。"
+    )
+    assert t("log.ui_language", language="zh", source="flag") == (
+        "介面語言 zh，來源 flag。"
+    )
+
+
 def test_missing_message_id():
     with pytest.raises(CatalogError, match="missing message id 'usage.file_missing'"):
         t("usage.file_missing")

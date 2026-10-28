@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import logging
 import os
@@ -10,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from ragcli.cli import SUPPORTED_SUFFIXES, main
+from ragcli.cli import SUPPORTED_SUFFIXES, _peek_option, _prepare_language, main
+from ragcli.config import load_config, peek_ui_language
 from ragcli.errors import (
     EXIT_DISK,
     EXIT_DOCUMENT,
@@ -26,9 +28,15 @@ from ragcli.errors import (
     EXIT_UNCLASSIFIED,
     EXIT_UNSUPPORTED_TYPE,
     EXIT_USAGE,
+    RagError,
 )
+from ragcli.i18n import current_language, set_language
 
 REPO = Path(__file__).resolve().parents[1]
+EN_LANG_HELP = "Interface language, en or zh. Overrides ui.language"
+ZH_LANG_HELP = "介面語言，en 或 zh。覆蓋 ui.language"
+HELP_DESCRIPTION = "本機混合語言 RAG。文件留在這部 Mac。"
+EN_LANG_INVALID = "Invalid language {value} for {source}. Use en or zh."
 
 
 def invoke(monkeypatch, argv, *, cwd=None, stdin=""):
@@ -52,6 +60,17 @@ def write_config(directory: Path, body: str = "") -> Path:
 
 def shown(text: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in text.splitlines())
+
+
+def flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+@pytest.fixture(autouse=True)
+def reset_language():
+    set_language("en")
+    yield
+    set_language("en")
 
 
 class _StdinBoom(io.StringIO):
@@ -106,6 +125,8 @@ def test_help_lists_commands_without_reading_config(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
     assert code == EXIT_OK
     assert err == ""
+    assert EN_LANG_HELP in flat(out)
+    assert ZH_LANG_HELP not in flat(out)
     for name in (
         "ingest",
         "ask",
@@ -147,8 +168,10 @@ def test_repo_config_show_matches_design(monkeypatch, tmp_path):
     assert values["config_path"] == str((REPO / "rag.toml").resolve())
     assert values["data_dir"] == str((REPO / "data").resolve())
     assert Path(values["data_dir"]).is_absolute()
+    assert "[ui]" not in (REPO / "rag.toml").read_text(encoding="utf-8")
     assert values == {
         "config_path": values["config_path"],
+        "ui.language": "en",
         "data_dir": values["data_dir"],
         "ollama.base_url": "http://127.0.0.1:11434",
         "embed.model": "qwen3-embedding:0.6b",
@@ -626,3 +649,500 @@ def test_shell_modules_do_not_call_the_network_or_parsers():
         "ocrmac",
     ):
         assert banned not in text
+
+
+def _invalid(value: str, source: str) -> str:
+    return EN_LANG_INVALID.format(value=value, source=source)
+
+
+def _help_lang_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "t"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "help.lang"
+    )
+
+
+def test_default_help_translates_only_the_lang_flag(monkeypatch, tmp_path):
+    code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert err == ""
+    text = flat(out)
+    assert "usage:" in out
+    assert EN_LANG_HELP in text
+    assert ZH_LANG_HELP not in text
+    assert HELP_DESCRIPTION in text
+    assert "把一個檔案入庫" in text
+
+
+def test_lang_zh_help_keeps_other_help_in_chinese(monkeypatch, tmp_path):
+    code, out, err = invoke(monkeypatch, ["--lang", "zh", "--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert err == ""
+    text = flat(out)
+    assert "usage:" in out
+    assert ZH_LANG_HELP in text
+    assert EN_LANG_HELP not in text
+    assert HELP_DESCRIPTION in text
+    assert "把一個檔案入庫" in text
+
+
+def test_lang_flag_overrides_ui_language(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "en"\n')
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "zh", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "zh"
+
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "en", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "en"
+    code, out, err = invoke(
+        monkeypatch, ["config", "show", "--lang", "en"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "en"
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=tmp_path)
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "zh"
+
+
+def test_valid_lang_skips_illegal_ui_language(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "fr"\n')
+    code, out, err = invoke(monkeypatch, ["--lang", "zh", "--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert err == ""
+    assert ZH_LANG_HELP in flat(out)
+    assert "Invalid language" not in out
+
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "zh", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "zh"
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "en", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "en"
+
+
+@pytest.mark.parametrize("value", ["fr", "zh-Hant", "zh ", "ZH", ""])
+def test_illegal_file_language_fails_commands_not_help(monkeypatch, tmp_path, value):
+    write_config(tmp_path, f'[ui]\nlanguage = "{value}"\n')
+    code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert err == ""
+    assert EN_LANG_HELP in flat(out)
+    assert ZH_LANG_HELP not in flat(out)
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.strip() == _invalid(value, "ui.language")
+    assert HELP_DESCRIPTION not in flat(err)
+
+
+@pytest.mark.parametrize("value", ["fr", "zh-Hant", "zh ", "ZH", "en-US"])
+def test_invalid_lang_flag_does_not_adopt_the_file(monkeypatch, tmp_path, value):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    code, out, err = invoke(
+        monkeypatch, ["--lang", value, "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.strip() == _invalid(value, "--lang")
+    assert "語言值無效" not in err
+    assert HELP_DESCRIPTION not in flat(out + err)
+
+
+def test_lang_equals_form(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "en"\n')
+    code, out, err = invoke(monkeypatch, ["--lang=zh", "config", "show"], cwd=tmp_path)
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "zh"
+    code, out, err = invoke(monkeypatch, ["--lang=fr", "config", "show"], cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.strip() == _invalid("fr", "--lang")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--lang", "--help"],
+        ["--lang"],
+        ["--lang="],
+        ["--lang", "--config"],
+        ["config", "show", "--lang"],
+    ],
+)
+def test_lang_flag_without_a_value_does_not_print_help(monkeypatch, tmp_path, argv):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert err.strip() == _invalid("", "--lang")
+    blob = flat(out + err)
+    assert HELP_DESCRIPTION not in blob
+    assert "usage:" not in blob
+    assert ZH_LANG_HELP not in blob
+
+
+@pytest.mark.parametrize(
+    ("body", "label"),
+    [
+        ("[ui]\nlanguage = 1\n", "int"),
+        ("[ui]\nlanguage = true\n", "bool"),
+        ("[ui]\nlanguage = []\n", "list"),
+    ],
+)
+def test_non_string_ui_language_uses_the_type_name(monkeypatch, tmp_path, body, label):
+    write_config(tmp_path, body)
+    code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert EN_LANG_HELP in flat(out)
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.strip() == _invalid(label, "ui.language")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--config"],
+        ["--config="],
+        ["--config", "--help"],
+        ["config", "show", "--config"],
+    ],
+)
+def test_config_flag_without_a_value_does_not_print_help(monkeypatch, tmp_path, argv):
+    code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert err.strip() == "缺少 --config 的值。"
+    blob = flat(out + err)
+    assert HELP_DESCRIPTION not in blob
+    assert "usage:" not in blob
+
+
+def test_last_lang_on_config_show_wins(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "en"\n')
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "en", "config", "show", "--lang", "zh"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "zh"
+
+
+def test_last_lang_flag_wins_on_nested_help(monkeypatch, tmp_path):
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "en", "models", "pull", "--lang", "zh", "--help"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    text = flat(out)
+    assert ZH_LANG_HELP in text
+    assert EN_LANG_HELP not in text
+    assert "usage:" in out
+
+
+def test_lang_after_double_dash_is_not_a_flag(monkeypatch, tmp_path):
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "en", "--help", "--", "--lang", "zh"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    text = flat(out)
+    assert EN_LANG_HELP in text
+    assert ZH_LANG_HELP not in text
+
+
+def test_lang_abbreviation_is_not_a_language(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    for argv in (["--l", "zh", "config", "show"], ["--language", "zh", "config", "show"]):
+        code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
+        assert code == EXIT_USAGE
+        assert "Invalid language" not in err
+        assert "語言值無效" not in err
+        assert "ui.language" not in out
+
+
+def test_parent_rag_toml_is_seen_before_help(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    child = tmp_path / "nested" / "dir"
+    child.mkdir(parents=True)
+    code, out, err = invoke(monkeypatch, ["--help"], cwd=child)
+    assert code == EXIT_OK
+    assert err == ""
+    assert ZH_LANG_HELP in flat(out)
+    assert EN_LANG_HELP not in flat(out)
+    assert "usage:" in out
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=child)
+    assert code == EXIT_OK, err
+    values = shown(out)
+    assert values["ui.language"] == "zh"
+    assert values["config_path"] == str((tmp_path / "rag.toml").resolve())
+
+
+def test_prescan_resolves_config_like_load_config(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    write_config(home, '[ui]\nlanguage = "zh"\n')
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    write_config(parent, '[ui]\nlanguage = "en"\n')
+    child = parent / "child"
+    child.mkdir()
+
+    code, out, err = invoke(
+        monkeypatch, ["--config", "~/rag.toml", "--help"], cwd=child
+    )
+    assert code == EXIT_OK, err
+    assert ZH_LANG_HELP in flat(out)
+    assert EN_LANG_HELP not in flat(out)
+
+    code, out, err = invoke(
+        monkeypatch, ["--config", "~/rag.toml", "config", "show"], cwd=child
+    )
+    assert code == EXIT_OK, err
+    values = shown(out)
+    assert values["ui.language"] == "zh"
+    assert values["config_path"] == str((home / "rag.toml").resolve())
+
+    code, out, err = invoke(
+        monkeypatch,
+        ["--config", "../../home/rag.toml", "--help"],
+        cwd=child,
+    )
+    assert code == EXIT_OK, err
+    assert ZH_LANG_HELP in flat(out)
+    assert EN_LANG_HELP not in flat(out)
+
+
+def test_ui_language_does_not_change_ocr_languages(monkeypatch, tmp_path):
+    write_config(
+        tmp_path,
+        '[ui]\nlanguage = "en"\n[ocr]\nlanguages = ["ja-JP", "en-US"]\n',
+    )
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=tmp_path)
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "en"
+    assert shown(out)["ocr.languages"] == "ja-JP,en-US"
+    config = load_config(tmp_path / "rag.toml", cwd=tmp_path)
+    assert config.ui_language == "en"
+    assert config.ocr_languages == ("ja-JP", "en-US")
+
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "zh", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "zh"
+    assert shown(out)["ocr.languages"] == "ja-JP,en-US"
+    config = load_config(
+        tmp_path / "rag.toml", cwd=tmp_path, language_from_flag="zh"
+    )
+    assert config.ui_language == "zh"
+    assert config.ocr_languages == ("ja-JP", "en-US")
+
+
+def test_empty_ui_table_defaults_to_english(monkeypatch, tmp_path):
+    write_config(tmp_path, "[ui]\n")
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=tmp_path)
+    assert code == EXIT_OK, err
+    assert shown(out)["ui.language"] == "en"
+
+
+def test_unknown_section_does_not_block_translated_help(monkeypatch, tmp_path):
+    write_config(tmp_path, '[theme]\ncolor = "x"\n[ui]\nlanguage = "zh"\n')
+    code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert err == ""
+    assert ZH_LANG_HELP in flat(out)
+    code, out, err = invoke(monkeypatch, ["config", "show"], cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert "theme" in err
+    assert "不明區段" in err
+
+
+def test_unknown_ui_field_is_still_rejected(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\ntheme = "dark"\n')
+    code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert ZH_LANG_HELP in flat(out)
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "en", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_USAGE
+    assert "theme" in err
+    assert "不明欄位" in err
+
+
+def test_verbose_logs_language_source_without_a_path(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch, ["--verbose", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert err == "DEBUG Interface language en from default.\n"
+    assert "rag.toml" not in err
+    assert str(tmp_path) not in err
+
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    code, _out, err = invoke(
+        monkeypatch, ["--verbose", "config", "show"], cwd=tmp_path
+    )
+    assert code == EXIT_OK, err
+    assert err == "DEBUG 介面語言 zh，來源 config。\n"
+    assert str(tmp_path) not in err
+
+    code, _out, err = invoke(
+        monkeypatch,
+        ["--verbose", "--lang", "en", "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK, err
+    assert err == "DEBUG Interface language en from flag.\n"
+    assert str(tmp_path) not in err
+
+
+def test_peek_ui_language_keeps_raw_values(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    write_config(tmp_path, '[ui]\nlanguage = "zh "\n')
+    assert peek_ui_language() == "zh "
+    write_config(tmp_path, "[ui]\nlanguage = 1\n")
+    assert peek_ui_language() == 1
+    write_config(tmp_path, "[ui]\n")
+    assert peek_ui_language() is None
+    write_config(tmp_path, "[\n")
+    assert peek_ui_language() is None
+    assert peek_ui_language(tmp_path / "missing.toml") is None
+    directory = tmp_path / "not-a-file"
+    directory.mkdir()
+    assert peek_ui_language(directory) is None
+    write_config(tmp_path, '[theme]\ncolor = "x"\n[ui]\nlanguage = "zh"\n')
+    assert peek_ui_language() == "zh"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([], ("absent", None)),
+        (["--lang=zh"], ("value", "zh")),
+        (["--lang", "zh"], ("value", "zh")),
+        (["--lang", "en", "models", "pull", "--lang", "zh"], ("value", "zh")),
+        (["ingest", "--lang", "zh"], ("value", "zh")),
+        (["--lang"], ("missing", None)),
+        (["--lang", "--help"], ("missing", None)),
+        (["--lang="], ("missing", None)),
+        (["--lang", "en", "--", "--lang", "zh"], ("value", "en")),
+        (["--", "--lang", "zh"], ("absent", None)),
+        (["--l", "zh"], ("absent", None)),
+        (["--language", "zh"], ("absent", None)),
+        (["--langzh"], ("absent", None)),
+    ],
+)
+def test_peek_option_table(argv, expected):
+    assert _peek_option(argv, "--lang") == expected
+
+
+def test_prepare_language_prescan_table(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    calls: list[Path | None] = []
+
+    def fake(config_path: Path | None = None, *, cwd: Path | None = None) -> str:
+        calls.append(config_path)
+        return "zh"
+
+    monkeypatch.setattr("ragcli.cli.peek_ui_language", fake)
+    assert _prepare_language(["--lang=zh"]) == ("zh", "flag")
+    assert _prepare_language(["ingest", "--lang", "zh"]) == ("zh", "flag")
+    assert _prepare_language(["--lang", "en", "models", "pull", "--lang", "zh"]) == (
+        "zh",
+        "flag",
+    )
+    assert _prepare_language(["--lang", "en", "--", "--lang", "zh"]) == ("en", "flag")
+    assert calls == []
+
+    assert _prepare_language(["--l", "zh"]) == ("zh", "config")
+    assert _prepare_language(["--", "--lang", "zh"]) == ("zh", "config")
+    assert _prepare_language(["--language", "en"]) == ("zh", "config")
+    assert calls == [None, None, None]
+
+    calls.clear()
+    assert _prepare_language(["--config", "other/rag.toml"]) == ("zh", "config")
+    assert calls == [Path("other/rag.toml")]
+
+    calls.clear()
+
+    def boom(config_path: Path | None = None, *, cwd: Path | None = None) -> str:
+        raise AssertionError("config was read")
+
+    monkeypatch.setattr("ragcli.cli.peek_ui_language", boom)
+    with pytest.raises(RagError) as caught:
+        _prepare_language(["--lang", "zh", "--config"])
+    assert caught.value.code == EXIT_USAGE
+    assert caught.value.message == "缺少 --config 的值。"
+    set_language("zh")
+    with pytest.raises(RagError) as caught:
+        _prepare_language(["--lang", "fr", "--config"])
+    assert caught.value.message == _invalid("fr", "--lang")
+    assert current_language() == "en"
+
+
+def test_prepare_language_ignores_illegal_peek_value(monkeypatch):
+    monkeypatch.setattr("ragcli.cli.peek_ui_language", lambda *_a, **_k: "zh ")
+    assert _prepare_language(["config", "show"]) == ("en", "default")
+    monkeypatch.setattr("ragcli.cli.peek_ui_language", lambda *_a, **_k: None)
+    assert _prepare_language(["config", "show"]) == ("en", "default")
+    monkeypatch.setattr("ragcli.cli.peek_ui_language", lambda *_a, **_k: 1)
+    assert _prepare_language(["config", "show"]) == ("en", "default")
+
+
+def test_lang_help_call_lives_in_add_globals():
+    tree = ast.parse((REPO / "src" / "ragcli" / "cli.py").read_text(encoding="utf-8"))
+    owners: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            if any(_help_lang_call(child) for child in ast.walk(node)):
+                owners.append(node.name)
+            continue
+        if any(_help_lang_call(child) for child in ast.walk(node)):
+            owners.append("<module>")
+    assert owners == ["_add_globals"]
+
+
+def test_ui_language_log_uses_percent_s():
+    tree = ast.parse((REPO / "src" / "ragcli" / "cli.py").read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_run"
+    )
+    debug_calls = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "debug":
+            continue
+        debug_calls.append(node)
+    assert len(debug_calls) == 1
+    call = debug_calls[0]
+    assert len(call.args) == 2
+    assert isinstance(call.args[0], ast.Constant) and call.args[0].value == "%s"
+    rendered = call.args[1]
+    assert isinstance(rendered, ast.Call)
+    assert isinstance(rendered.func, ast.Name) and rendered.func.id == "t"
+    assert rendered.args[0].value == "log.ui_language"

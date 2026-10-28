@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from ragcli.ask import run_ask
-from ragcli.config import Config, format_config, load_config
+from ragcli.config import Config, format_config, load_config, peek_ui_language
 from ragcli.errors import (
     EXIT_NOT_FOUND,
     EXIT_OK,
@@ -26,6 +26,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import set_language, t
 from ragcli.ingest import run_ingest
 from ragcli.models_lock import ollama_lock
 from ragcli.ollama import OllamaClient, model_pull_list, pull_models
@@ -167,14 +168,96 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run(argv: list[str] | None) -> int:
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    language, source = _prepare_language(args_list)
+    set_language(language)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(args_list)
     configure_logging(bool(getattr(args, "verbose", False)))
-    config = load_config(getattr(args, "config", None), getattr(args, "data_dir", None))
+    logging.getLogger("ragcli").debug(
+        "%s",
+        t("log.ui_language", language=language, source=source),
+    )
+    config = load_config(
+        getattr(args, "config", None),
+        getattr(args, "data_dir", None),
+        language_from_flag=language if source == "flag" else None,
+    )
     func = getattr(args, "func", None)
     if func is None:
         parser.error("缺少子命令")
     return func(args, config)
+
+
+def _prepare_language(argv: list[str]) -> tuple[str, str]:
+    """Choose `en` or `zh` before the parser is built.
+
+    Returns the language and a source of `flag`, `config`, or `default`.
+    A missing or illegal `--lang` is an English usage error and does not
+    read `[ui] language`. A missing `--config` value stops here too.
+    """
+    lang_state, lang_value = _peek_option(argv, "--lang")
+    config_state, config_value = _peek_option(argv, "--config")
+    chosen: str | None = None
+    if lang_state != "absent":
+        chosen = "" if lang_value is None else lang_value
+        if chosen not in {"en", "zh"}:
+            set_language("en")
+            raise RagError(
+                EXIT_USAGE,
+                t("usage.language_invalid", value=chosen, source="--lang"),
+            )
+    if config_state == "missing":
+        raise RagError(EXIT_USAGE, "缺少 --config 的值。")
+    if chosen is not None:
+        return chosen, "flag"
+    config_path = None if config_value is None else Path(config_value)
+    peeked = peek_ui_language(config_path)
+    if isinstance(peeked, str) and peeked in {"en", "zh"}:
+        return peeked, "config"
+    return "en", "default"
+
+
+def _peek_option(argv: list[str], name: str) -> tuple[str, str | None]:
+    """Return the last exact `name` in `argv`.
+
+    The state is `absent`, `missing`, or `value`. A bare `--` stops the
+    scan. `name=text` is a value, and an empty `name=` is missing. The
+    following token is a value only when it exists and does not start
+    with `-`. Abbreviations are not flags.
+    """
+    state = "absent"
+    value: str | None = None
+    index = 0
+    limit = len(argv)
+    prefix = f"{name}="
+    while index < limit:
+        token = argv[index]
+        if token == "--":
+            break
+        if token == name:
+            nxt = index + 1
+            if nxt >= limit or argv[nxt].startswith("-"):
+                state = "missing"
+                value = None
+                index += 1
+                continue
+            state = "value"
+            value = argv[nxt]
+            index += 2
+            continue
+        if token.startswith(prefix):
+            text = token[len(prefix) :]
+            if text == "":
+                state = "missing"
+                value = None
+            else:
+                state = "value"
+                value = text
+            index += 1
+            continue
+        index += 1
+    return state, value
 
 
 def configure_logging(verbose: bool) -> None:
@@ -347,6 +430,12 @@ def _add_globals(parser: argparse.ArgumentParser, *, root: bool) -> None:
         type=_non_negative_int,
         default=absent,
         help="等待 Ollama 鎖的秒數。省略則一直等。0 表示不等",
+    )
+    parser.add_argument(
+        "--lang",
+        choices=("en", "zh"),
+        default=absent,
+        help=t("help.lang"),
     )
 
 
