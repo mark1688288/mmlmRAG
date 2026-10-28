@@ -33,7 +33,10 @@ TINY = "lab-embed:tiny"
 SECRET = "機密退款句子XYZ"
 VECTOR = (3.0, 0.0, 0.0, 4.0)
 LATER = "2026-10-26T00:00:00+00:00"
-PREFIX = "查詢前綴是為 Qwen3-Embedding 寫的，這個模型可能不適用。"
+PREFIX = (
+    "The query prefix was written for Qwen3-Embedding, "
+    "and this model may not apply."
+)
 
 
 def write_rag(
@@ -228,7 +231,7 @@ def test_plan_same_model_wider_than_native_is_exit_12():
             target_native_dim=4,
         ),
         EXIT_MISMATCH,
-        "同一模型的維度大於已儲存的 native_dim。",
+        "The same model's dimensions are greater than the stored native_dim.",
     )
 
 
@@ -242,7 +245,7 @@ def test_native_width_uses_config_for_the_active_model_and_known_tags(tmp_path):
     expect(
         lambda: native_width(config, "qwen3-embedding:4b", 8),
         EXIT_MISMATCH,
-        "--native-dimensions 與這個模型的原生寬度不一致。",
+        "--native-dimensions does not match this model's native width.",
     )
 
 
@@ -265,7 +268,7 @@ def test_rebuild_same_width_copies_stored_floats_without_ollama_or_l2(tmp_path, 
     name = collection_name(EMBED, 4)
     assert code == EXIT_OK
     assert not source.exists()
-    assert f"已重建 {name}，區塊 1。" in captured.out
+    assert f"Rebuilt {name}, chunks 1." in captured.out
     assert SECRET not in captured.out
     assert SECRET not in captured.err
     assert not (config.data_dir / "locks" / "ollama.lock").exists()
@@ -273,7 +276,7 @@ def test_rebuild_same_width_copies_stored_floats_without_ollama_or_l2(tmp_path, 
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
     logged = log.read_text(encoding="utf-8")
     assert SECRET not in logged
-    assert "重新嵌入" in logged
+    assert "Reembed" in logged
     stored = embedding_of(config, chunk.chunk_id, EMBED, 4, 2048)
     assert stored == (3.0, 0.0, 0.0, 4.0)
     with opened(config) as store:
@@ -306,7 +309,7 @@ def test_shorter_width_truncates_and_normalizes_without_ollama(tmp_path, monkeyp
         add_vector(store, chunk, num_ctx=1024)
     code = run_reembed(config, dimensions=2, clock=lambda: LATER)
     assert code == EXIT_OK
-    assert "已重建" in capsys.readouterr().out
+    assert "Rebuilt" in capsys.readouterr().out
     assert embedding_of(config, chunk.chunk_id, EMBED, 2, 1024) == (1.0, 0.0)
     with opened(config) as store:
         vector = store.get_vector(chunk.chunk_id, EMBED)
@@ -326,7 +329,7 @@ def test_missing_native_blob_does_not_call_ollama(tmp_path, monkeypatch):
     with opened(config) as store:
         add_document(store)
         add_chunk(store, DOC, 0, "尚未嵌入", embed_state="pending")
-    expect(lambda: run_reembed(config), EXIT_MISMATCH, "缺少原生向量。")
+    expect(lambda: run_reembed(config), EXIT_MISMATCH, "Missing native vectors.")
     assert not (config.data_dir / "locks" / "ollama.lock").exists()
 
     partial = tmp_path / "partial"
@@ -338,7 +341,7 @@ def test_missing_native_blob_does_not_call_ollama(tmp_path, monkeypatch):
         first = add_chunk(store, DOC, 0, "有向量", embed_state="done")
         add_chunk(store, DOC, 1, "沒向量", embed_state="pending")
         add_vector(store, first)
-    expect(lambda: run_reembed(other), EXIT_MISMATCH, "缺少原生向量。")
+    expect(lambda: run_reembed(other), EXIT_MISMATCH, "Missing native vectors.")
     assert collection_name(EMBED, 4) not in collection_names(other)
 
 
@@ -349,7 +352,7 @@ def test_token_estimate_above_num_ctx_is_exit_12(tmp_path, monkeypatch):
         add_document(store)
         chunk = add_chunk(store, DOC, 0, SECRET, embed_state="done", token_estimate=3000)
         add_vector(store, chunk, num_ctx=2048)
-    expect(lambda: run_reembed(config), EXIT_MISMATCH, "區塊可能已被舊的上下文裁斷。")
+    expect(lambda: run_reembed(config), EXIT_MISMATCH, "The chunk may have been truncated by the old context.")
     assert collection_names(config) == []
     assert latest_run(config).exit_code == EXIT_MISMATCH
     assert latest_run(config).model_name is None
@@ -365,7 +368,7 @@ def test_same_model_wider_than_stored_native_is_exit_12(tmp_path, monkeypatch):
     expect(
         lambda: run_reembed(config, dimensions=8),
         EXIT_MISMATCH,
-        "同一模型的維度大於已儲存的 native_dim。",
+        "The same model's dimensions are greater than the stored native_dim.",
     )
     assert collection_name(EMBED, 8) not in collection_names(config)
     assert not (config.data_dir / "locks" / "ollama.lock").exists()
@@ -480,7 +483,7 @@ def test_model_switch_missing_from_tags_is_exit_7(tmp_path, capsys):
             clock=lambda: LATER,
         ),
         EXIT_MODEL_MISSING,
-        f"缺少模型 {TINY}。請執行 rag models pull。",
+        f"Missing model {TINY}. Run rag models pull.",
     )
     captured = capsys.readouterr()
     assert PREFIX in captured.err
@@ -518,7 +521,7 @@ def test_wrong_width_from_ollama_is_exit_12_and_unloads(tmp_path):
             clock=lambda: LATER,
         ),
         EXIT_MISMATCH,
-        "嵌入長度不是這個模型的原生寬度。",
+        "The embedding length is not this model's native width.",
     )
     assert fake.loaded == []
     assert store_vector_absent(config, chunk.chunk_id, TINY)
@@ -538,7 +541,7 @@ def test_low_disk_does_not_call_ollama(tmp_path):
     error = expect(
         lambda: run_reembed(config, client=fake.client(), free_bytes=lambda: 0),
         EXIT_DISK,
-        f"磁碟剩餘 0 位元組，少於 {10**18}。",
+        f"Free disk space is 0 bytes, less than {10**18}.",
     )
     assert error.code == EXIT_DISK
     assert fake.seen == []
@@ -558,17 +561,17 @@ def test_no_activate_and_drop_old(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert run_reembed(config, drop_old=True, clock=lambda: LATER) == EXIT_OK
     same = capsys.readouterr()
-    assert "已刪除集合" not in same.out
+    assert "Deleted collection" not in same.out
     assert wide in collection_names(config)
     assert run_reembed(config, dimensions=2, activate=False, clock=lambda: LATER) == EXIT_OK
     built = capsys.readouterr()
-    assert "作用中指標未改" in built.out
+    assert "active pointer is unchanged" in built.out
     assert active_of(config) is not None and active_of(config).collection == wide
     assert short in collection_names(config)
     assert run_reembed(config, dimensions=2, activate=False, drop_old=True, clock=lambda: LATER) == EXIT_OK
     dropped = capsys.readouterr()
-    assert f"已刪除集合 {wide}" in dropped.out
-    assert "作用中指標仍指向已刪除的集合。" in dropped.err
+    assert f"Deleted collection {wide}" in dropped.out
+    assert "The active pointer still points at the deleted collection." in dropped.err
     assert wide not in collection_names(config)
     assert short in collection_names(config)
     expect(lambda: run_use(config, wide), EXIT_NO_COLLECTION, "尚未有這個集合。")
@@ -589,14 +592,14 @@ def test_empty_corpus_creates_collection_without_ollama(tmp_path, monkeypatch, c
     expect(
         lambda: run_reembed(config, model=TINY),
         EXIT_USAGE,
-        "未知嵌入模型要同時給 --native-dimensions。",
+        "An unknown embedding model requires --native-dimensions.",
     )
     assert not config.data_dir.exists()
     code = run_reembed(config, clock=lambda: LATER)
     out = capsys.readouterr().out
     name = collection_name(EMBED, 4)
     assert code == EXIT_OK
-    assert f"已重建 {name}，區塊 0。" in out
+    assert f"Rebuilt {name}, chunks 0." in out
     assert name in collection_names(config)
     assert active_of(config) is not None
     assert not (config.data_dir / "locks" / "ollama.lock").exists()
@@ -674,15 +677,15 @@ def test_delete_removes_sqlite_images_and_every_collection(tmp_path, monkeypatch
     capsys.readouterr()
     wide = collection_name(EMBED, 4)
     short = collection_name(EMBED, 2)
-    expect(lambda: run_delete(config, doc_id="abc"), EXIT_USAGE, "doc-id 必須是 64 位小寫十六進位。")
-    expect(lambda: run_delete(config, doc_id="D" * 64), EXIT_USAGE, "doc-id 必須是 64 位小寫十六進位。")
-    expect(lambda: run_delete(config, doc_id="d" * 64), EXIT_NOT_FOUND, "找不到文件。")
-    expect(lambda: run_delete(config, path=tmp_path / "missing.txt"), EXIT_NOT_FOUND, "找不到文件。")
+    expect(lambda: run_delete(config, doc_id="abc"), EXIT_USAGE, "doc-id must be 64 lowercase hexadecimal digits.")
+    expect(lambda: run_delete(config, doc_id="D" * 64), EXIT_USAGE, "doc-id must be 64 lowercase hexadecimal digits.")
+    expect(lambda: run_delete(config, doc_id="d" * 64), EXIT_NOT_FOUND, "Cannot find the document.")
+    expect(lambda: run_delete(config, path=tmp_path / "missing.txt"), EXIT_NOT_FOUND, "Cannot find the document.")
     alias = tmp_path / "nested" / ".." / note.name
     code = run_delete(config, path=alias, clock=lambda: LATER)
     captured = capsys.readouterr()
     assert code == EXIT_OK
-    assert captured.out.strip() == f"已刪除 {DOC}"
+    assert captured.out.strip() == f"Deleted {DOC}"
     assert "note.txt" not in captured.out
     assert SECRET not in captured.out
     assert not image_dir.exists()
@@ -694,7 +697,7 @@ def test_delete_removes_sqlite_images_and_every_collection(tmp_path, monkeypatch
         assert store.get_document(DOC) is None
         assert store.get_document(DOC_B) is not None
     assert run_delete(config, doc_id=DOC_B, clock=lambda: LATER) == EXIT_OK
-    assert capsys.readouterr().out.strip() == f"已刪除 {DOC_B}"
+    assert capsys.readouterr().out.strip() == f"Deleted {DOC_B}"
     with opened(config) as store:
         assert store.get_document(DOC_B) is None
         deletes = [run for run in store.recent_runs() if run.command == "delete" and run.exit_code == 0]
@@ -740,7 +743,7 @@ def test_delete_keeps_sqlite_when_chroma_fails(tmp_path):
     expect(
         lambda: run_delete(config, doc_id=DOC, client_factory=factory),
         EXIT_UNCLASSIFIED,
-        "向量索引刪除失敗，文件仍在。",
+        "Vector index deletion failed, and the document is still there.",
     )
     assert image_dir.is_dir()
     with opened(config) as store:
@@ -803,16 +806,16 @@ def test_status_reports_probe_counts_and_extra_ids(tmp_path, monkeypatch, capsys
     assert code == EXIT_OK
     assert "Ollama 0.40.11" in captured.out
     assert f"ps {EMBED} context_length=2048" in captured.out
-    assert "向量索引多出來的 id" in captured.out
+    assert "Vector index has extra ids" in captured.out
     assert orphan.chunk_id in captured.out
-    assert "向量索引缺少的 id" in captured.out
-    assert "集合筆數與已嵌入不一致。" in captured.out
-    assert "失敗圖像 1" in captured.out
-    assert "已嵌入 2" in captured.out
-    assert "待完成 1" in captured.out
-    assert "描述未完成 1" in captured.out
-    assert "磁碟剩餘 12345" in captured.out
-    assert "run reembed 結束碼 0 區塊 3" in captured.out
+    assert "Vector index is missing ids" in captured.out
+    assert "The collection count does not match the embedded count." in captured.out
+    assert "Failed images 1" in captured.out
+    assert "Embedded 2" in captured.out
+    assert "Pending 1" in captured.out
+    assert "Description unfinished 1" in captured.out
+    assert "Free disk 12345" in captured.out
+    assert "run reembed exit code 0 chunk 3" in captured.out
     assert SECRET not in captured.out
     assert SECRET not in captured.err
     with opened(config) as store:
@@ -840,12 +843,12 @@ def test_status_ollama_down_is_exit_6_and_warns_on_wide_permissions(tmp_path, mo
     captured = capsys.readouterr()
     assert code == EXIT_OLLAMA_UNREACHABLE
     assert stat.S_IMODE(config.data_dir.stat().st_mode) == 0o755
-    assert "data/ 對群組或其他人可讀。" in captured.err
-    assert "連不上 Ollama。" in captured.out
-    assert "已嵌入 1" in captured.out
-    assert "作用中集合" in captured.out
+    assert "data/ is readable by the group or others." in captured.err
+    assert "Cannot reach Ollama." in captured.out
+    assert "Embedded 1" in captured.out
+    assert "Active collection" in captured.out
     log = (config.data_dir / "logs" / "rag.log").read_text(encoding="utf-8")
-    assert "連不上 Ollama。" in log
+    assert "Cannot reach Ollama." in log
     with opened(config) as store:
         status_runs = [run for run in store.recent_runs() if run.command == "status"]
     assert len(status_runs) == 1
@@ -882,7 +885,7 @@ def test_cli_reembed_use_delete_and_status(tmp_path, monkeypatch):
         cwd=tmp_path,
     )
     assert code == EXIT_OK
-    assert "作用中指標未改" in out
+    assert "active pointer is unchanged" in out
     assert short in out
     assert SECRET not in out
     assert SECRET not in err
@@ -890,7 +893,7 @@ def test_cli_reembed_use_delete_and_status(tmp_path, monkeypatch):
     assert not (config.data_dir / "locks" / "ollama.lock").exists()
     code, out, _err = invoke(monkeypatch, base + ["reembed"], cwd=tmp_path)
     assert code == EXIT_OK
-    assert "已重建" in out
+    assert "Rebuilt" in out
     wide = collection_name(EMBED, 4)
     assert active_of(config) is not None and active_of(config).collection == wide
     fake = SwitchFake(width=8)
@@ -912,7 +915,7 @@ def test_cli_reembed_use_delete_and_status(tmp_path, monkeypatch):
     )
     assert code == EXIT_OK
     assert PREFIX in err
-    assert f"已刪除集合 {wide}" in out
+    assert f"Deleted collection {wide}" in out
     assert "ollama pull" not in err
     assert SECRET not in err
     assert [body["input"] for body in document_bodies(fake)] == [[SECRET], ["另一份文件"]]
@@ -925,23 +928,23 @@ def test_cli_reembed_use_delete_and_status(tmp_path, monkeypatch):
         monkeypatch, base + ["use", "--collection", short], cwd=tmp_path
     )
     assert code == EXIT_OK
-    assert f"作用中集合 {short}" in out
+    assert f"Active collection {short}" in out
     pointer = active_of(config)
     assert pointer is not None and pointer.collection == short and pointer.dimensions == 2
     code, out, err = invoke(
         monkeypatch, base + ["delete", "--path", str(tmp_path / "nested" / ".." / note.name)], cwd=tmp_path
     )
     assert code == EXIT_OK
-    assert out.strip() == f"已刪除 {DOC}"
+    assert out.strip() == f"Deleted {DOC}"
     assert "note.txt" not in out
     code, out, _err = invoke(monkeypatch, base + ["delete", "--doc-id", DOC_B], cwd=tmp_path)
     assert code == EXIT_OK
-    assert out.strip() == f"已刪除 {DOC_B}"
+    assert out.strip() == f"Deleted {DOC_B}"
     monkeypatch.setattr("ragcli.reembed.OllamaClient", lambda base_url: FakeOllama().client())
     code, out, err = invoke(monkeypatch, base + ["status"], cwd=tmp_path)
     assert code == EXIT_OK
     assert "Ollama 0.40.11" in out
-    assert "ps 空" in out
+    assert "ps empty" in out
     assert SECRET not in out
     assert SECRET not in err
     with opened(config) as store:

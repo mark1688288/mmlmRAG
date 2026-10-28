@@ -39,6 +39,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import t
 from ragcli.models_lock import ollama_lock
 from ragcli.ollama import OllamaClient
 from ragcli.store.chroma import (
@@ -65,7 +66,6 @@ KNOWN_NATIVE_DIM = {
 
 _DOC_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _PRIVATE_FILE = 0o600
-_PREFIX_WARNING = "查詢前綴是為 Qwen3-Embedding 寫的，這個模型可能不適用。"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +105,12 @@ def plan_reembed(
     _require_width(target_dimensions, "dimensions")
     _require_width(target_native_dim, "native_dim")
     if not isinstance(stored_model, str) or stored_model.strip() == "":
-        raise RagError(EXIT_MISMATCH, "缺少原生向量。")
+        raise RagError(EXIT_MISMATCH, t("reembed.native_missing"))
     if not isinstance(target_model, str) or target_model.strip() == "":
-        raise RagError(EXIT_USAGE, "嵌入模型標籤不可為空。")
+        raise RagError(EXIT_USAGE, t("reembed.model_empty"))
     if target_model == stored_model:
         if target_dimensions > stored_native_dim:
-            raise RagError(EXIT_MISMATCH, "同一模型的維度大於已儲存的 native_dim。")
+            raise RagError(EXIT_MISMATCH, t("reembed.same_model_wider"))
         return ReembedPlan(
             calls_ollama=False,
             reparse=False,
@@ -119,7 +119,7 @@ def plan_reembed(
             native_dim=stored_native_dim,
         )
     if target_dimensions > target_native_dim:
-        raise RagError(EXIT_MISMATCH, "維度大於這個模型的原生寬度。")
+        raise RagError(EXIT_MISMATCH, t("reembed.dimensions_exceed_native"))
     return ReembedPlan(
         calls_ollama=True,
         reparse=False,
@@ -138,11 +138,11 @@ def native_width(config: Config, model: str, explicit: int | None) -> int:
     elif model in KNOWN_NATIVE_DIM:
         expected = KNOWN_NATIVE_DIM[model]
     elif explicit is None:
-        raise RagError(EXIT_USAGE, "未知嵌入模型要同時給 --native-dimensions。")
+        raise RagError(EXIT_USAGE, t("reembed.native_dimensions_required"))
     else:
         return explicit
     if explicit is not None and explicit != expected:
-        raise RagError(EXIT_MISMATCH, "--native-dimensions 與這個模型的原生寬度不一致。")
+        raise RagError(EXIT_MISMATCH, t("reembed.native_dimensions_mismatch"))
     return expected
 
 
@@ -166,7 +166,7 @@ def run_reembed(
     native = native_width(config, target, native_dimensions)
     width = _target_dimensions(config, target, native, dimensions)
     if not target.startswith("qwen3-embedding"):
-        print(_PREFIX_WARNING, file=sys.stderr)
+        print(t("ask.prefix_warning"), file=sys.stderr)
     with _session(config, "reembed", clock, client_factory=client_factory) as (store, index, outcome):
         outcome.chunk_count = _reembed(
             config,
@@ -194,7 +194,7 @@ def run_use(
 ) -> int:
     """Point the active index at an existing collection."""
     if not isinstance(name, str) or name.strip() == "":
-        raise RagError(EXIT_USAGE, "rag use 要 --collection NAME。")
+        raise RagError(EXIT_USAGE, t("usage.use_needs_collection"))
     with _session(config, None, clock, client_factory=client_factory) as (store, index, _outcome):
         info = index.describe(name)
         store.set_active(
@@ -205,8 +205,8 @@ def run_use(
                 embed_num_ctx=info.embed_num_ctx,
             )
         )
-        logger.info("作用中集合 %s", info.name)
-        print(f"作用中集合 {info.name}")
+        logger.info("%s", t("status.active_collection", name=info.name))
+        print(t("status.active_collection", name=info.name))
         return EXIT_OK
 
 
@@ -220,7 +220,7 @@ def run_delete(
 ) -> int:
     """Delete one document from every collection, then from SQLite."""
     if (path is None) == (doc_id is None):
-        raise RagError(EXIT_USAGE, "rag delete 要 --path 或 --doc-id，兩者擇一。")
+        raise RagError(EXIT_USAGE, t("usage.delete_needs_one"))
     with _session(config, "delete", clock, client_factory=client_factory) as (store, index, outcome):
         if doc_id is not None:
             document = _document_for_id(store, doc_id)
@@ -231,11 +231,11 @@ def run_delete(
             try:
                 index.delete(ids)
             except Exception as exc:
-                raise RagError(EXIT_UNCLASSIFIED, "向量索引刪除失敗，文件仍在。") from exc
+                raise RagError(EXIT_UNCLASSIFIED, t("reembed.index_delete_failed")) from exc
         store.delete_document(document.doc_id)
         outcome.chunk_count = len(ids)
-        logger.info("已刪除文件 %s", document.doc_id)
-        print(f"已刪除 {document.doc_id}")
+        logger.info("%s", t("log.document_deleted", doc_id=document.doc_id))
+        print(t("status.deleted", doc_id=document.doc_id))
         return EXIT_OK
 
 
@@ -270,7 +270,7 @@ def _reembed(
 ) -> int:
     previous = store.get_active()
     chunks = _working_chunks(store)
-    logger.info("重新嵌入 %s", model)
+    logger.info("%s", t("log.reembed", model=model))
     if not chunks:
         plan_calls_ollama = False
         embed_num_ctx = config.embed_num_ctx
@@ -281,12 +281,12 @@ def _reembed(
         if not missing:
             plan, embed_num_ctx = _stored_plan(chunks, stored, model, dimensions, native)
             if plan.calls_ollama or plan.reparse:
-                raise RagError(EXIT_UNCLASSIFIED, "重新嵌入計劃不正確。")
+                raise RagError(EXIT_UNCLASSIFIED, t("reembed.plan_invalid"))
             embedded = None
             records = _records(store, chunks, [stored[chunk.chunk_id].vector for chunk in chunks])
             plan_calls_ollama = False
         elif not others:
-            raise RagError(EXIT_MISMATCH, "缺少原生向量。")
+            raise RagError(EXIT_MISMATCH, t("reembed.native_missing"))
         else:
             plan = plan_reembed(
                 stored_model=sorted(others)[0],
@@ -296,7 +296,7 @@ def _reembed(
                 target_native_dim=native,
             )
             if not plan.calls_ollama or plan.reparse:
-                raise RagError(EXIT_UNCLASSIFIED, "重新嵌入計劃不正確。")
+                raise RagError(EXIT_UNCLASSIFIED, t("reembed.plan_invalid"))
             ollama = client if client is not None else OllamaClient(config.ollama_base_url)
             vectors = _embed_texts(
                 config,
@@ -319,8 +319,8 @@ def _reembed(
     )
     expected = collection_name(model, dimensions)
     if name != expected:
-        raise RagError(EXIT_MISMATCH, "寫入的集合名稱與模型不一致。")
-    logger.info("集合 %s", name)
+        raise RagError(EXIT_MISMATCH, t("reembed.collection_name_mismatch"))
+    logger.info("%s", t("log.collection", name=name))
     _persist(
         store,
         chunks,
@@ -334,15 +334,15 @@ def _reembed(
         called_ollama=plan_calls_ollama,
     )
     if activate:
-        print(f"已重建 {name}，區塊 {len(chunks)}。")
+        print(t("status.rebuilt", name=name, count=len(chunks)))
     else:
-        print(f"已建立 {name}，作用中指標未改。")
+        print(t("status.created", name=name))
     if drop_old and previous is not None and previous.collection != name:
         index.drop(previous.collection)
-        logger.info("已刪除集合 %s", previous.collection)
-        print(f"已刪除集合 {previous.collection}。")
+        logger.info("%s", t("log.collection_dropped", name=previous.collection))
+        print(t("status.collection_dropped", name=previous.collection))
         if not activate:
-            print("作用中指標仍指向已刪除的集合。", file=sys.stderr)
+            print(t("status.pointer_dangling"), file=sys.stderr)
     return len(chunks)
 
 
@@ -356,7 +356,7 @@ def _stored_plan(
     widths = {vector.native_dim for vector in stored.values()}
     contexts = {vector.num_ctx for vector in stored.values()}
     if len(widths) != 1 or len(contexts) != 1:
-        raise RagError(EXIT_MISMATCH, "已儲存向量的寬度或 num_ctx 不一致。")
+        raise RagError(EXIT_MISMATCH, t("reembed.stored_width_mismatch"))
     stored_native = next(iter(widths))
     plan = plan_reembed(
         stored_model=model,
@@ -367,7 +367,7 @@ def _stored_plan(
     )
     for chunk in chunks:
         if chunk.token_estimate > stored[chunk.chunk_id].num_ctx:
-            raise RagError(EXIT_MISMATCH, "區塊可能已被舊的上下文裁斷。")
+            raise RagError(EXIT_MISMATCH, t("reembed.context_truncated"))
     return plan, next(iter(contexts))
 
 
@@ -388,7 +388,7 @@ def _persist(
     with store.transaction():
         if called_ollama:
             if embedded is None or len(embedded) != len(chunks):
-                raise RagError(EXIT_UNCLASSIFIED, "嵌入結果數量不正確。")
+                raise RagError(EXIT_UNCLASSIFIED, t("reembed.embed_count"))
             for chunk, vector in zip(chunks, embedded, strict=True):
                 store.upsert_vector(
                     VectorRecord(
@@ -431,7 +431,7 @@ def _embed_texts(
             if model not in set(client.tags()):
                 raise RagError(
                     EXIT_MODEL_MISSING,
-                    f"缺少模型 {model}。請執行 rag models pull。",
+                    t("ollama.model_missing", names=model),
                 )
             outcome.model_name = model
             for batch in _batches(chunks, config.embed_batch_size):
@@ -443,7 +443,7 @@ def _embed_texts(
                     raise
                 if len(vectors) != len(batch) or any(len(vector) != native for vector in vectors):
                     outcome.ollama_error_count += 1
-                    raise RagError(EXIT_MISMATCH, "嵌入長度不是這個模型的原生寬度。")
+                    raise RagError(EXIT_MISMATCH, t("reembed.width_mismatch"))
                 embedded.extend(vectors)
         except BaseException as exc:
             body_error = exc
@@ -457,7 +457,7 @@ def _release(client: OllamaClient, model: str, body_error: BaseException | None)
     try:
         client.release_stage(model)
     except RagError:
-        logger.error("卸載 %s 失敗。", model)
+        logger.error("%s", t("log.unload_failed", model=model))
         if body_error is None:
             raise
 
@@ -471,7 +471,7 @@ def _report_status(
 ) -> int:
     mode = stat.S_IMODE(store.data_dir.stat().st_mode)
     if mode & 0o077:
-        print("data/ 對群組或其他人可讀。", file=sys.stderr)
+        print(t("status.data_dir_readable"), file=sys.stderr)
     done = store.count_chunks("done")
     pending = store.count_chunks("pending")
     blocked = store.count_chunks("blocked")
@@ -481,35 +481,51 @@ def _report_status(
     version, loaded, failure = _probe(probe)
     code = EXIT_OK
     if failure is not None:
-        print("連不上 Ollama。" if failure.code == EXIT_OLLAMA_UNREACHABLE else failure.message)
-        print("ps 讀不到")
+        if failure.code == EXIT_OLLAMA_UNREACHABLE:
+            print(t("ollama.unreachable"))
+        else:
+            print(failure.message)
+        print(t("status.ps_unreadable"))
         code = failure.code
     else:
-        print(f"Ollama {version}")
+        print(t("status.ollama_version", version=version))
         if not loaded:
-            print("ps 空")
+            print(t("status.ps_empty"))
         for item in loaded or ():
             if item.context_length is None:
-                print(f"ps {item.name}")
+                print(t("status.ps", name=item.name))
             else:
-                print(f"ps {item.name} context_length={item.context_length}")
+                print(
+                    t(
+                        "status.ps_context",
+                        name=item.name,
+                        context_length=item.context_length,
+                    )
+                )
     _print_index(store, index)
-    print(f"已嵌入 {done}")
-    print(f"待完成 {pending}")
-    print(f"描述未完成 {blocked}")
-    print(f"失敗圖像 {failed}")
-    print(f"磁碟剩餘 {free}")
+    print(t("status.embedded", count=done))
+    print(t("status.pending", count=pending))
+    print(t("status.blocked", count=blocked))
+    print(t("status.failed_images", count=failed))
+    print(t("status.free_disk", free=free))
     for run in _finished_runs(store):
-        print(f"run {run.command} 結束碼 {run.exit_code} 區塊 {run.chunk_count}")
+        print(
+            t(
+                "status.run",
+                command=run.command,
+                exit_code=run.exit_code,
+                chunk_count=run.chunk_count,
+            )
+        )
     return code
 
 
 def _print_index(store: SqliteStore, index: ChromaIndex) -> None:
     active = store.get_active()
     if active is None:
-        print("尚未有作用中集合")
+        print(t("status.no_active_collection"))
         return
-    print(f"作用中集合 {active.collection}")
+    print(t("status.active_collection", name=active.collection))
     try:
         count = index.count(
             model=active.embed_model,
@@ -520,7 +536,7 @@ def _print_index(store: SqliteStore, index: ChromaIndex) -> None:
     except RagError as exc:
         print(exc.message)
         return
-    print(f"集合筆數 {count}")
+    print(t("status.collection_count", count=count))
     sqlite_ids = _all_chunk_ids(store)
     done_ids = {
         chunk.chunk_id
@@ -531,11 +547,11 @@ def _print_index(store: SqliteStore, index: ChromaIndex) -> None:
     extra = sorted(set(present) - sqlite_ids)
     missing = sorted(done_ids - set(present))
     if extra:
-        print("向量索引多出來的 id " + " ".join(extra))
+        print(t("status.index_extra", ids=" ".join(extra)))
     if missing:
-        print("向量索引缺少的 id " + " ".join(missing))
+        print(t("status.index_missing", ids=" ".join(missing)))
     if count != store.count_chunks("done"):
-        print("集合筆數與已嵌入不一致。")
+        print(t("status.count_mismatch"))
 
 
 def _probe(
@@ -546,7 +562,7 @@ def _probe(
         loaded = client.ps()
     except RagError as exc:
         if exc.code == EXIT_OLLAMA_UNREACHABLE:
-            logger.error("連不上 Ollama。")
+            logger.error("%s", t("ollama.unreachable"))
         return None, None, exc
     return version, loaded, None
 
@@ -594,7 +610,7 @@ def _records(
         if document is None:
             document = store.get_document(chunk.doc_id)
             if document is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+                raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
             documents[chunk.doc_id] = document
         records.append(
             IndexRecord(
@@ -616,16 +632,16 @@ def _records(
 
 def _document_for_id(store: SqliteStore, doc_id: str) -> Document:
     if not isinstance(doc_id, str) or _DOC_ID_RE.fullmatch(doc_id) is None:
-        raise RagError(EXIT_USAGE, "doc-id 必須是 64 位小寫十六進位。")
+        raise RagError(EXIT_USAGE, t("reembed.doc_id_invalid"))
     found = store.get_document(doc_id)
     if found is None:
-        raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+        raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
     return found
 
 
 def _document_for_path(store: SqliteStore, raw: Path | None) -> Document:
     if raw is None:
-        raise RagError(EXIT_USAGE, "rag delete 要 --path 或 --doc-id，兩者擇一。")
+        raise RagError(EXIT_USAGE, t("usage.delete_needs_one"))
     path = raw.expanduser()
     candidates: list[str] = [str(path)]
     try:
@@ -645,7 +661,7 @@ def _document_for_path(store: SqliteStore, raw: Path | None) -> Document:
         found = store.find_document_by_path(candidate)
         if found is not None:
             return found
-    raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+    raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
 
 
 def _all_chunk_ids(store: SqliteStore) -> set[str]:
@@ -658,7 +674,7 @@ def _all_chunk_ids(store: SqliteStore) -> set[str]:
 def _target_model(config: Config, model: str | None) -> str:
     chosen = config.embed_model if model is None else model.strip()
     if chosen == "" or "\x00" in chosen:
-        raise RagError(EXIT_USAGE, "嵌入模型標籤不可為空。")
+        raise RagError(EXIT_USAGE, t("reembed.model_empty"))
     return chosen
 
 
@@ -674,8 +690,8 @@ def _target_dimensions(config: Config, model: str, native: int, requested: int |
 def _require_width(value: int, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         if label.startswith("--"):
-            raise RagError(EXIT_USAGE, f"{label} 必須是正整數。")
-        raise RagError(EXIT_MISMATCH, f"{label} 必須是正整數。")
+            raise RagError(EXIT_USAGE, t("usage.named_positive_int", name=label))
+        raise RagError(EXIT_MISMATCH, t("usage.named_positive_int", name=label))
     return value
 
 
@@ -689,7 +705,7 @@ def _require_disk(config: Config, free_bytes: Callable[[], int] | None) -> None:
     if free < config.min_free_bytes:
         raise RagError(
             EXIT_DISK,
-            f"磁碟剩餘 {free} 位元組，少於 {config.min_free_bytes}。",
+            t("disk.free_below", free=free, minimum=config.min_free_bytes),
         )
 
 
@@ -699,11 +715,11 @@ def _read_free(config: Config, free_bytes: Callable[[], int] | None) -> int:
         try:
             free = shutil.disk_usage(probe).free
         except OSError as exc:
-            raise RagError(EXIT_DISK, "讀不到磁碟剩餘空間。") from exc
+            raise RagError(EXIT_DISK, t("disk.free_unreadable")) from exc
     else:
         free = free_bytes()
     if isinstance(free, bool) or not isinstance(free, int) or free < 0:
-        raise RagError(EXIT_DISK, "讀不到磁碟剩餘空間。")
+        raise RagError(EXIT_DISK, t("disk.free_unreadable"))
     return free
 
 
@@ -741,7 +757,7 @@ def _session(
         raise
     finally:
         try:
-            logger.info("結束碼 %s", outcome.code)
+            logger.info("%s", t("log.exit_code", code=outcome.code))
             if run_id is not None:
                 store.finish_run(
                     run_id,

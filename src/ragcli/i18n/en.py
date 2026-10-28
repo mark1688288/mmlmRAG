@@ -225,4 +225,66 @@ MESSAGES = {
     "io.data_dir_symlink": "The data directory cannot be a symbolic link.",
     "io.data_path_not_directory": "The data path is not a directory: {name}",
     "lock.create_failed": "Cannot create the Ollama lock.",
+    "reembed.native_missing": "Missing native vectors.",
+    "reembed.model_empty": "The embedding model tag cannot be empty.",
+    "reembed.same_model_wider": (
+        "The same model's dimensions are greater than the stored native_dim."
+    ),
+    "reembed.dimensions_exceed_native": (
+        "The dimensions are greater than this model's native width."
+    ),
+    "reembed.native_dimensions_required": (
+        "An unknown embedding model requires --native-dimensions."
+    ),
+    "reembed.native_dimensions_mismatch": (
+        "--native-dimensions does not match this model's native width."
+    ),
+    "reembed.plan_invalid": "The reembed plan is incorrect.",
+    "reembed.collection_name_mismatch": (
+        "The written collection name does not match the model."
+    ),
+    "reembed.stored_width_mismatch": (
+        "The stored vectors' width or num_ctx is inconsistent."
+    ),
+    "reembed.context_truncated": (
+        "The chunk may have been truncated by the old context."
+    ),
+    "reembed.embed_count": "The embedding result count is incorrect.",
+    "reembed.width_mismatch": (
+        "The embedding length is not this model's native width."
+    ),
+    "reembed.index_delete_failed": (
+        "Vector index deletion failed, and the document is still there."
+    ),
+    "reembed.doc_id_invalid": "doc-id must be 64 lowercase hexadecimal digits.",
+    "log.reembed": "Reembed {model}",
+    "log.document_deleted": "Deleted document {doc_id}",
+    "log.collection_dropped": "Deleted collection {name}",
+    "status.active_collection": "Active collection {name}",
+    "status.deleted": "Deleted {doc_id}",
+    "status.rebuilt": "Rebuilt {name}, chunks {count}.",
+    "status.created": "Created {name}, and the active pointer is unchanged.",
+    "status.collection_dropped": "Deleted collection {name}.",
+    "status.pointer_dangling": (
+        "The active pointer still points at the deleted collection."
+    ),
+    "status.data_dir_readable": "data/ is readable by the group or others.",
+    "status.ps_unreadable": "Cannot read ps",
+    "status.ollama_version": "Ollama {version}",
+    "status.ps_empty": "ps empty",
+    "status.ps": "ps {name}",
+    "status.ps_context": "ps {name} context_length={context_length}",
+    "status.embedded": "Embedded {count}",
+    "status.pending": "Pending {count}",
+    "status.blocked": "Description unfinished {count}",
+    "status.failed_images": "Failed images {count}",
+    "status.free_disk": "Free disk {free}",
+    "status.run": "run {command} exit code {exit_code} chunk {chunk_count}",
+    "status.no_active_collection": "There is no active collection",
+    "status.collection_count": "Collection count {count}",
+    "status.index_extra": "Vector index has extra ids {ids}",
+    "status.index_missing": "Vector index is missing ids {ids}",
+    "status.count_mismatch": (
+        "The collection count does not match the embedded count."
+    ),
 }
