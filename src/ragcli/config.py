@@ -278,9 +278,9 @@ def normalize_base_url(url: str) -> str:
         raise RagError(EXIT_USAGE, t("config.url_userinfo"))
     host = parts.hostname
     if parts.scheme.lower() not in {"http", "https"} or host is None:
-        raise RagError(EXIT_USAGE, _reject_url(raw))
+        raise RagError(EXIT_USAGE, t("config.url_loopback", url=raw))
     if host.lower() not in _LOOPBACK_HOSTS:
-        raise RagError(EXIT_USAGE, _reject_url(raw))
+        raise RagError(EXIT_USAGE, t("config.url_loopback", url=raw))
     if parts.path not in {"", "/"} or parts.query or parts.fragment:
         raise RagError(EXIT_USAGE, t("config.url_path", url=raw))
     shown = host.lower()
@@ -288,10 +288,6 @@ def normalize_base_url(url: str) -> str:
         shown = f"[{shown}]"
     port = "" if parts.port is None else f":{parts.port}"
     return f"{parts.scheme.lower()}://{shown}{port}"
-
-
-def _reject_url(url: str) -> str:
-    return t("config.url_loopback", url=url)
 
 
 def peek_ui_language(
