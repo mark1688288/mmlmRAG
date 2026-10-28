@@ -9,6 +9,8 @@ mmlmRAG (`ragcli`) is a local mixed-language retrieval-augmented generation comm
 [![Ollama](https://img.shields.io/badge/Ollama-local-000000?logo=ollama&logoColor=white)](https://ollama.com)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-1F6FEB)](LICENSE)
 
+[中文](README.zh-Hant.md)
+
 </div>
 
 ## Prerequisites
@@ -91,6 +93,13 @@ rag config show
 `--config` selects a TOML file. The default search walks upward from the working directory for `rag.toml`. `--data-dir` overrides `paths.data_dir`. `--verbose` turns on debug logs. `--lock-timeout` is how many seconds to wait for the Ollama lock. `0` means do not wait.
 
 `rag ingest` accepts `--force`, `--resume`, `--no-ocr`, `--no-vision`, `--no-embed`, `--strict`, `--max-pages`, and `--max-bytes`. `rag ask` accepts `--k` (1 to 8), `--model`, `--no-fallback`, `--show-chunks`, and `--json`.
+
+`--lang` chooses the interface language, `en` or `zh`. `en` is English and is the default. `zh` is Traditional Chinese. The flag overrides `[ui] language` in `rag.toml`. When both are absent, the interface is English. ragcli does not read `LANG`, `LC_ALL`, or the macOS preferred language. The value must be exactly `en` or `zh`. `[ocr] languages` chooses Vision recognition and does not follow the interface language.
+
+```toml
+[ui]
+language = "zh"
+```
 
 ## Security
 
