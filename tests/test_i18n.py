@@ -1,7 +1,4 @@
-"""Message catalogs: lookup, placeholders, and import checks.
-
-These tests do not change CLI output. Call sites still pass literal strings.
-"""
+"""Message catalogs: lookup, placeholders, and import checks."""
 
 from __future__ import annotations
 
@@ -75,6 +72,59 @@ def test_language_switch_messages():
     assert t("log.ui_language", language="zh", source="flag") == (
         "介面語言 zh，來源 flag。"
     )
+
+
+def test_cli_catalog_keeps_the_original_sentences():
+    assert t("help.description") == (
+        "Local mixed-language RAG. Documents stay on this Mac."
+    )
+    assert t("help.ingest") == "Ingest one file"
+    assert t("help.ingest.file") == (
+        "File path. This version does not accept a directory"
+    )
+    assert t("help.metavar.command") == "command"
+    assert t("help.metavar.action") == "action"
+    assert t("usage.subcommand_missing") == "Missing subcommand"
+    assert t("usage.k_range") == "--k must be an integer from 1 to 8"
+    assert t("usage.positive_int") == "Must be a positive integer"
+    assert t("usage.non_negative_int") == "Must be zero or a positive integer"
+    assert t("io.file_unreadable", path="notes.pdf") == (
+        "File does not exist or is unreadable: notes.pdf"
+    )
+    assert t("ask.question_missing") == "Missing question."
+    assert t("usage.flags_exclusive") == (
+        "--embed-only and --generator-only cannot be used together."
+    )
+    assert t("usage.delete_needs_one") == (
+        "rag delete requires --path or --doc-id, exactly one."
+    )
+    assert t("usage.use_needs_collection") == "rag use requires --collection NAME."
+    assert t("status.pulled", name="embed") == "Pulled embed"
+    assert t("status.unloaded", name="embed") == "Unloaded embed"
+    assert t("status.no_loaded_models") == "No models are loaded."
+    set_language("zh")
+    assert t("help.description") == "本機混合語言 RAG。文件留在這部 Mac。"
+    assert t("help.ingest") == "把一個檔案入庫"
+    assert t("help.ingest.file") == "檔案路徑。第一版不接受資料夾"
+    assert t("help.metavar.command") == "指令"
+    assert t("help.metavar.action") == "動作"
+    assert t("usage.subcommand_missing") == "缺少子命令"
+    assert t("usage.k_range") == "--k 必須是 1 到 8 的整數"
+    assert t("usage.positive_int") == "必須是正整數"
+    assert t("usage.non_negative_int") == "必須是零或正整數"
+    assert t("io.file_unreadable", path="notes.pdf") == "檔案不存在或不可讀：notes.pdf"
+    assert t("ask.question_missing") == "缺少問題。"
+    assert t("usage.flags_exclusive") == (
+        "--embed-only 同 --generator-only 不能同時使用。"
+    )
+    assert t("usage.delete_needs_one") == "rag delete 要 --path 或 --doc-id，兩者擇一。"
+    assert t("usage.use_needs_collection") == "rag use 要 --collection NAME。"
+    assert t("usage.no_suffix") == "（沒有副檔名）"
+    assert t("usage.suffix_unsupported", label=".xlsx") == "副檔名不在第一版：.xlsx"
+    assert t("usage.not_implemented", name="ask") == "ask 尚未實作。"
+    assert t("status.pulled", name="embed") == "已拉取 embed"
+    assert t("status.unloaded", name="embed") == "已卸載 embed"
+    assert t("status.no_loaded_models") == "沒有已載入的模型。"
 
 
 def test_missing_message_id():

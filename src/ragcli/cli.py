@@ -72,96 +72,118 @@ def console_main() -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rag",
-        description="本機混合語言 RAG。文件留在這部 Mac。",
+        description=t("help.description"),
         allow_abbrev=False,
     )
     _add_globals(parser, root=True)
-    commands = parser.add_subparsers(dest="command", required=True, metavar="指令")
+    commands = parser.add_subparsers(
+        dest="command", required=True, metavar=t("help.metavar.command")
+    )
 
-    ingest = _add_parser(commands, "ingest", help="把一個檔案入庫")
+    ingest = _add_parser(commands, "ingest", help=t("help.ingest"))
     _add_globals(ingest, root=False)
-    ingest.add_argument("file", nargs="?", help="檔案路徑。第一版不接受資料夾")
-    ingest.add_argument("--force", action="store_true", help="重新處理這個檔案")
+    ingest.add_argument("file", nargs="?", help=t("help.ingest.file"))
+    ingest.add_argument("--force", action="store_true", help=t("help.ingest.force"))
     ingest.add_argument(
-        "--resume", action="store_true", help="繼續未完成的入庫，可以不帶路徑"
+        "--resume", action="store_true", help=t("help.ingest.resume")
     )
-    ingest.add_argument("--no-ocr", action="store_true", help="不做 OCR")
-    ingest.add_argument("--no-vision", action="store_true", help="不做圖像描述")
-    ingest.add_argument("--no-embed", action="store_true", help="不嵌入")
+    ingest.add_argument("--no-ocr", action="store_true", help=t("help.ingest.no_ocr"))
     ingest.add_argument(
-        "--strict", action="store_true", help="任何圖像或區塊失敗都算失敗"
+        "--no-vision", action="store_true", help=t("help.ingest.no_vision")
     )
-    ingest.add_argument("--max-pages", type=_positive_int, help="頁數上限")
-    ingest.add_argument("--max-bytes", type=_positive_int, help="檔案位元組上限")
+    ingest.add_argument(
+        "--no-embed", action="store_true", help=t("help.ingest.no_embed")
+    )
+    ingest.add_argument(
+        "--strict", action="store_true", help=t("help.ingest.strict")
+    )
+    ingest.add_argument(
+        "--max-pages", type=_positive_int, help=t("help.ingest.max_pages")
+    )
+    ingest.add_argument(
+        "--max-bytes", type=_positive_int, help=t("help.ingest.max_bytes")
+    )
     ingest.set_defaults(func=_cmd_ingest)
 
-    ask = _add_parser(commands, "ask", help="問已入庫的文件")
+    ask = _add_parser(commands, "ask", help=t("help.ask"))
     _add_globals(ask, root=False)
-    ask.add_argument("question", nargs="?", help="問題。省略時由標準輸入讀取")
-    ask.add_argument("--k", type=_k_value, help="取回區塊數，1 到 8")
-    ask.add_argument("--model", help="優先使用的生成模型標籤")
+    ask.add_argument("question", nargs="?", help=t("help.ask.question"))
+    ask.add_argument("--k", type=_k_value, help=t("help.ask.k"))
+    ask.add_argument("--model", help=t("help.ask.model"))
     ask.add_argument(
-        "--no-fallback", action="store_true", help="記憶體不足時不要改用 4B"
+        "--no-fallback", action="store_true", help=t("help.ask.no_fallback")
     )
-    ask.add_argument("--show-chunks", action="store_true", help="在 stderr 印出命中區塊")
-    ask.add_argument("--json", action="store_true", help="以 JSON 輸出")
+    ask.add_argument(
+        "--show-chunks", action="store_true", help=t("help.ask.show_chunks")
+    )
+    ask.add_argument("--json", action="store_true", help=t("help.ask.json"))
     ask.set_defaults(func=_cmd_ask)
 
-    reembed = _add_parser(commands, "reembed", help="按模型或維度重建向量")
+    reembed = _add_parser(commands, "reembed", help=t("help.reembed"))
     _add_globals(reembed, root=False)
-    reembed.add_argument("--model", help="嵌入模型標籤")
-    reembed.add_argument("--dimensions", type=_positive_int, help="目標維度")
+    reembed.add_argument("--model", help=t("help.reembed.model"))
+    reembed.add_argument(
+        "--dimensions", type=_positive_int, help=t("help.reembed.dimensions")
+    )
     reembed.add_argument(
         "--native-dimensions",
         type=_positive_int,
-        help="未知嵌入模型的原生寬度",
+        help=t("help.reembed.native_dimensions"),
     )
     reembed.add_argument(
-        "--no-activate", action="store_true", help="只建集合，不改作用中指標"
+        "--no-activate", action="store_true", help=t("help.reembed.no_activate")
     )
-    reembed.add_argument("--drop-old", action="store_true", help="刪除上一個集合")
+    reembed.add_argument(
+        "--drop-old", action="store_true", help=t("help.reembed.drop_old")
+    )
     reembed.set_defaults(func=_cmd_reembed)
 
-    use = _add_parser(commands, "use", help="改作用中集合")
+    use = _add_parser(commands, "use", help=t("help.use"))
     _add_globals(use, root=False)
-    use.add_argument("--collection", help="作用中集合名稱")
+    use.add_argument("--collection", help=t("help.use.collection"))
     use.set_defaults(func=_cmd_use)
 
-    delete = _add_parser(commands, "delete", help="刪除一份文件的區塊同向量")
+    delete = _add_parser(commands, "delete", help=t("help.delete"))
     _add_globals(delete, root=False)
-    delete.add_argument("--path", help="要刪除的原始檔路徑")
-    delete.add_argument("--doc-id", help="要刪除的文件 id")
+    delete.add_argument("--path", help=t("help.delete.path"))
+    delete.add_argument("--doc-id", help=t("help.delete.doc_id"))
     delete.set_defaults(func=_cmd_delete)
 
-    status = _add_parser(commands, "status", help="顯示本機狀態")
+    status = _add_parser(commands, "status", help=t("help.status"))
     _add_globals(status, root=False)
     status.set_defaults(func=_cmd_status)
 
-    models = _add_parser(commands, "models", help="拉取或卸載 Ollama 模型")
+    models = _add_parser(commands, "models", help=t("help.models"))
     _add_globals(models, root=False)
     model_commands = models.add_subparsers(
-        dest="models_command", required=True, metavar="動作"
+        dest="models_command", required=True, metavar=t("help.metavar.action")
     )
-    pull = _add_parser(model_commands, "pull", help="按預設順序拉取模型")
+    pull = _add_parser(model_commands, "pull", help=t("help.models.pull"))
     _add_globals(pull, root=False)
-    pull.add_argument("--embed-only", action="store_true", help="只拉取嵌入模型")
-    pull.add_argument("--generator-only", action="store_true", help="只拉取生成模型")
+    pull.add_argument(
+        "--embed-only", action="store_true", help=t("help.models.pull.embed_only")
+    )
+    pull.add_argument(
+        "--generator-only",
+        action="store_true",
+        help=t("help.models.pull.generator_only"),
+    )
     pull.add_argument(
         "--no-fallback-model",
         action="store_true",
-        help="不拉取 4B，未見 4B 前不自動後備",
+        help=t("help.models.pull.no_fallback_model"),
     )
     pull.set_defaults(func=_cmd_models_pull)
-    unload = _add_parser(model_commands, "unload", help="卸載已載入的模型")
+    unload = _add_parser(model_commands, "unload", help=t("help.models.unload"))
     _add_globals(unload, root=False)
     unload.set_defaults(func=_cmd_models_unload)
 
-    config = _add_parser(commands, "config", help="查看設定")
+    config = _add_parser(commands, "config", help=t("help.config"))
     _add_globals(config, root=False)
     config_commands = config.add_subparsers(
-        dest="config_command", required=True, metavar="動作"
+        dest="config_command", required=True, metavar=t("help.metavar.action")
     )
-    show = _add_parser(config_commands, "show", help="印出解析後的設定")
+    show = _add_parser(config_commands, "show", help=t("help.config.show"))
     _add_globals(show, root=False)
     show.set_defaults(func=_cmd_config_show)
     return parser
@@ -185,7 +207,7 @@ def _run(argv: list[str] | None) -> int:
     )
     func = getattr(args, "func", None)
     if func is None:
-        parser.error("缺少子命令")
+        parser.error(t("usage.subcommand_missing"))
     return func(args, config)
 
 
@@ -194,7 +216,8 @@ def _prepare_language(argv: list[str]) -> tuple[str, str]:
 
     Returns the language and a source of `flag`, `config`, or `default`.
     A missing or illegal `--lang` is an English usage error and does not
-    read `[ui] language`. A missing `--config` value stops here too.
+    read `[ui] language`. A missing `--config` value stops here too. A
+    valid `--lang` is applied first, so that error follows the flag.
     """
     lang_state, lang_value = _peek_option(argv, "--lang")
     config_state, config_value = _peek_option(argv, "--config")
@@ -208,7 +231,8 @@ def _prepare_language(argv: list[str]) -> tuple[str, str]:
                 t("usage.language_invalid", value=chosen, source="--lang"),
             )
     if config_state == "missing":
-        raise RagError(EXIT_USAGE, "缺少 --config 的值。")
+        set_language("en" if chosen is None else chosen)
+        raise RagError(EXIT_USAGE, t("usage.config_missing"))
     if chosen is not None:
         return chosen, "flag"
     config_path = None if config_value is None else Path(config_value)
@@ -278,7 +302,7 @@ def _cmd_config_show(_args: argparse.Namespace, config: Config) -> int:
 
 def _cmd_ingest(args: argparse.Namespace, config: Config) -> int:
     if args.file is None and not args.resume:
-        raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
+        raise RagError(EXIT_USAGE, t("usage.file_not_directory"))
     if args.file is not None:
         _require_ingest_file(args.file)
     return run_ingest(
@@ -299,13 +323,18 @@ def _cmd_ingest(args: argparse.Namespace, config: Config) -> int:
 def _require_ingest_file(raw: str) -> None:
     path = Path(raw)
     if path.is_dir():
-        raise RagError(EXIT_USAGE, "第一版要檔案路徑，不接受資料夾。")
+        raise RagError(EXIT_USAGE, t("usage.file_not_directory"))
     if not path.is_file() or not os.access(path, os.R_OK):
-        raise RagError(EXIT_NOT_FOUND, f"檔案不存在或不可讀：{path}")
+        raise RagError(EXIT_NOT_FOUND, t("io.file_unreadable", path=path))
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
-        label = suffix if suffix else "（沒有副檔名）"
-        raise RagError(EXIT_UNSUPPORTED_TYPE, f"副檔名不在第一版：{label}")
+        raise RagError(
+            EXIT_UNSUPPORTED_TYPE,
+            t(
+                "usage.suffix_unsupported",
+                label=suffix if suffix else t("usage.no_suffix"),
+            ),
+        )
 
 
 def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
@@ -325,13 +354,13 @@ def _question_text(question: str | None) -> str:
     if question is not None:
         text = question.strip()
         if text == "":
-            raise RagError(EXIT_USAGE, "缺少問題。")
+            raise RagError(EXIT_USAGE, t("ask.question_missing"))
         return text
     if sys.stdin is None or sys.stdin.isatty():
-        raise RagError(EXIT_USAGE, "缺少問題。")
+        raise RagError(EXIT_USAGE, t("ask.question_missing"))
     text = sys.stdin.read().strip()
     if text == "":
-        raise RagError(EXIT_USAGE, "缺少問題。")
+        raise RagError(EXIT_USAGE, t("ask.question_missing"))
     return text
 
 
@@ -349,13 +378,13 @@ def _cmd_reembed(args: argparse.Namespace, config: Config) -> int:
 
 def _cmd_use(args: argparse.Namespace, config: Config) -> int:
     if not args.collection:
-        raise RagError(EXIT_USAGE, "rag use 要 --collection NAME。")
+        raise RagError(EXIT_USAGE, t("usage.use_needs_collection"))
     return run_use(config, args.collection)
 
 
 def _cmd_delete(args: argparse.Namespace, config: Config) -> int:
     if (args.path is None) == (args.doc_id is None):
-        raise RagError(EXIT_USAGE, "rag delete 要 --path 或 --doc-id，兩者擇一。")
+        raise RagError(EXIT_USAGE, t("usage.delete_needs_one"))
     path = None if args.path is None else Path(args.path)
     return run_delete(config, path=path, doc_id=args.doc_id)
 
@@ -366,7 +395,7 @@ def _cmd_status(_args: argparse.Namespace, config: Config) -> int:
 
 def _cmd_models_pull(args: argparse.Namespace, config: Config) -> int:
     if args.embed_only and args.generator_only:
-        raise RagError(EXIT_USAGE, "--embed-only 同 --generator-only 不能同時使用。")
+        raise RagError(EXIT_USAGE, t("usage.flags_exclusive"))
     names = model_pull_list(
         config,
         embed_only=args.embed_only,
@@ -376,7 +405,7 @@ def _cmd_models_pull(args: argparse.Namespace, config: Config) -> int:
     with ollama_lock(config.data_dir, timeout=_lock_timeout(args)):
         pull_models(OllamaClient(config.ollama_base_url), names)
     for name in names:
-        print(f"已拉取 {name}")
+        print(t("status.pulled", name=name))
     return EXIT_OK
 
 
@@ -384,9 +413,9 @@ def _cmd_models_unload(args: argparse.Namespace, config: Config) -> int:
     with ollama_lock(config.data_dir, timeout=_lock_timeout(args)):
         names = OllamaClient(config.ollama_base_url).unload_all()
     if not names:
-        print("沒有已載入的模型。")
+        print(t("status.no_loaded_models"))
     for name in names:
-        print(f"已卸載 {name}")
+        print(t("status.unloaded", name=name))
     return EXIT_OK
 
 
@@ -399,7 +428,7 @@ def _lock_timeout(args: argparse.Namespace) -> float | None:
 
 def _unimplemented(name: str):
     def command(_args: argparse.Namespace, _config: Config) -> int:
-        raise RagError(EXIT_UNCLASSIFIED, f"{name} 尚未實作。")
+        raise RagError(EXIT_UNCLASSIFIED, t("usage.not_implemented", name=name))
 
     return command
 
@@ -411,25 +440,25 @@ def _add_globals(parser: argparse.ArgumentParser, *, root: bool) -> None:
         "--config",
         type=Path,
         default=absent,
-        help="設定檔。預設由目前目錄向上尋找 rag.toml",
+        help=t("help.flag.config"),
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=absent,
-        help="覆蓋設定檔的 data_dir。相對路徑由目前目錄解析",
+        help=t("help.flag.data_dir"),
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
         default=verbose_default,
-        help="日誌改為 DEBUG。DEBUG 不印文件正文",
+        help=t("help.flag.verbose"),
     )
     parser.add_argument(
         "--lock-timeout",
         type=_non_negative_int,
         default=absent,
-        help="等待 Ollama 鎖的秒數。省略則一直等。0 表示不等",
+        help=t("help.flag.lock_timeout"),
     )
     parser.add_argument(
         "--lang",
@@ -448,9 +477,9 @@ def _non_negative_int(raw: str) -> int:
     try:
         value = int(raw, 10)
     except ValueError:
-        raise argparse.ArgumentTypeError("必須是零或正整數") from None
+        raise argparse.ArgumentTypeError(t("usage.non_negative_int")) from None
     if value < 0:
-        raise argparse.ArgumentTypeError("必須是零或正整數")
+        raise argparse.ArgumentTypeError(t("usage.non_negative_int"))
     return value
 
 
@@ -458,9 +487,9 @@ def _positive_int(raw: str) -> int:
     try:
         value = int(raw, 10)
     except ValueError:
-        raise argparse.ArgumentTypeError("必須是正整數") from None
+        raise argparse.ArgumentTypeError(t("usage.positive_int")) from None
     if value <= 0:
-        raise argparse.ArgumentTypeError("必須是正整數")
+        raise argparse.ArgumentTypeError(t("usage.positive_int"))
     return value
 
 
@@ -468,9 +497,9 @@ def _k_value(raw: str) -> int:
     try:
         value = int(raw, 10)
     except ValueError:
-        raise argparse.ArgumentTypeError("--k 必須是 1 到 8 的整數") from None
+        raise argparse.ArgumentTypeError(t("usage.k_range")) from None
     if value < 1 or value > 8:
-        raise argparse.ArgumentTypeError("--k 必須是 1 到 8 的整數")
+        raise argparse.ArgumentTypeError(t("usage.k_range"))
     return value
 
 

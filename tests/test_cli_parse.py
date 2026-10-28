@@ -35,8 +35,15 @@ from ragcli.i18n import current_language, set_language
 REPO = Path(__file__).resolve().parents[1]
 EN_LANG_HELP = "Interface language, en or zh. Overrides ui.language"
 ZH_LANG_HELP = "介面語言，en 或 zh。覆蓋 ui.language"
-HELP_DESCRIPTION = "本機混合語言 RAG。文件留在這部 Mac。"
+EN_DESCRIPTION = "Local mixed-language RAG. Documents stay on this Mac."
+ZH_DESCRIPTION = "本機混合語言 RAG。文件留在這部 Mac。"
+EN_INGEST_HELP = "Ingest one file"
+ZH_INGEST_HELP = "把一個檔案入庫"
+EN_FILE = "This version expects a file path, not a directory."
+ZH_FILE = "第一版要檔案路徑，不接受資料夾。"
 EN_LANG_INVALID = "Invalid language {value} for {source}. Use en or zh."
+EN_CONFIG_MISSING = "Missing value for --config."
+ZH_CONFIG_MISSING = "缺少 --config 的值。"
 
 
 def invoke(monkeypatch, argv, *, cwd=None, stdin=""):
@@ -425,7 +432,8 @@ def test_ingest_directory_exits_2(monkeypatch, tmp_path):
     )
     assert code == EXIT_USAGE
     assert out == ""
-    assert "第一版要檔案路徑" in err
+    assert EN_FILE in err
+    assert ZH_FILE not in err
     assert not (tmp_path / "data").exists()
 
 
@@ -439,7 +447,7 @@ def test_ingest_directory_with_file_suffix_exits_2(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_USAGE
-    assert "第一版要檔案路徑" in err
+    assert EN_FILE in err
 
 
 def test_ingest_missing_file_exits_4(monkeypatch, tmp_path):
@@ -451,7 +459,7 @@ def test_ingest_missing_file_exits_4(monkeypatch, tmp_path):
     )
     assert code == EXIT_NOT_FOUND
     assert out == ""
-    assert "不存在或不可讀" in err
+    assert "File does not exist or is unreadable:" in err
 
 
 def test_ingest_unsupported_suffix_exits_3(monkeypatch, tmp_path):
@@ -461,7 +469,7 @@ def test_ingest_unsupported_suffix_exits_3(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["ingest", str(document)], cwd=tmp_path)
     assert code == EXIT_UNSUPPORTED_TYPE
     assert out == ""
-    assert ".xlsx" in err
+    assert "Suffix is not supported in this version: .xlsx" in err
 
 
 def test_ingest_text_file_without_models_exits_0(monkeypatch, tmp_path):
@@ -503,7 +511,7 @@ def test_ingest_unreadable_file_exits_4(monkeypatch, tmp_path):
     finally:
         document.chmod(0o644)
     assert code == EXIT_NOT_FOUND
-    assert "不可讀" in err
+    assert "File does not exist or is unreadable:" in err
 
 
 def test_ingest_fifo_is_not_opened(monkeypatch, tmp_path):
@@ -512,14 +520,44 @@ def test_ingest_fifo_is_not_opened(monkeypatch, tmp_path):
     os.mkfifo(fifo)
     code, _out, err = invoke(monkeypatch, ["ingest", str(fifo)], cwd=tmp_path)
     assert code == EXIT_NOT_FOUND
-    assert "不可讀" in err
+    assert "File does not exist or is unreadable:" in err
 
 
 def test_ingest_without_path_exits_2(monkeypatch, tmp_path):
     write_config(tmp_path)
     code, _out, err = invoke(monkeypatch, ["ingest"], cwd=tmp_path)
     assert code == EXIT_USAGE
-    assert "第一版要檔案路徑" in err
+    assert EN_FILE in err
+
+
+def test_ingest_directory_follows_lang_zh(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "zh", "--config", str(tmp_path / "rag.toml"), "ingest", str(folder)],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert ZH_FILE in err
+    assert EN_FILE not in err
+
+
+def test_ingest_directory_follows_ui_language_zh(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    code, out, err = invoke(
+        monkeypatch,
+        ["ingest", str(folder)],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert ZH_FILE in err
+    assert EN_FILE not in err
 
 
 def test_ingest_resume_without_path_exits_0(monkeypatch, tmp_path):
@@ -549,7 +587,7 @@ def test_ask_without_question_exits_2(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["ask"], cwd=tmp_path, stdin="")
     assert code == EXIT_USAGE
     assert out == ""
-    assert "缺少問題" in err
+    assert "Missing question." in err
 
 
 def test_ask_reads_stdin_without_echoing_it(monkeypatch, tmp_path):
@@ -594,7 +632,7 @@ def test_models_pull_flags_conflict(monkeypatch, tmp_path):
         cwd=tmp_path,
     )
     assert code == EXIT_USAGE
-    assert "不能同時使用" in err
+    assert "--embed-only and --generator-only cannot be used together." in err
     assert not (tmp_path / "data").exists()
 
 
@@ -602,21 +640,21 @@ def test_delete_requires_exactly_one_selector(monkeypatch, tmp_path):
     write_config(tmp_path)
     neither, _out, err = invoke(monkeypatch, ["delete"], cwd=tmp_path)
     assert neither == EXIT_USAGE
-    assert "兩者擇一" in err
+    assert "rag delete requires --path or --doc-id, exactly one." in err
     both, _out, err = invoke(
         monkeypatch,
         ["delete", "--path", "a", "--doc-id", "b"],
         cwd=tmp_path,
     )
     assert both == EXIT_USAGE
-    assert "兩者擇一" in err
+    assert "rag delete requires --path or --doc-id, exactly one." in err
 
 
 def test_use_requires_collection(monkeypatch, tmp_path):
     write_config(tmp_path)
     code, _out, err = invoke(monkeypatch, ["use"], cwd=tmp_path)
     assert code == EXIT_USAGE
-    assert "--collection" in err
+    assert "rag use requires --collection NAME." in err
 
 
 def test_dimensions_must_be_positive(monkeypatch, tmp_path):
@@ -666,7 +704,7 @@ def _help_lang_call(node: ast.AST) -> bool:
     )
 
 
-def test_default_help_translates_only_the_lang_flag(monkeypatch, tmp_path):
+def test_default_help_is_english(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["--help"], cwd=tmp_path)
     assert code == EXIT_OK
     assert err == ""
@@ -674,11 +712,15 @@ def test_default_help_translates_only_the_lang_flag(monkeypatch, tmp_path):
     assert "usage:" in out
     assert EN_LANG_HELP in text
     assert ZH_LANG_HELP not in text
-    assert HELP_DESCRIPTION in text
-    assert "把一個檔案入庫" in text
+    assert EN_DESCRIPTION in text
+    assert ZH_DESCRIPTION not in text
+    assert EN_INGEST_HELP in text
+    assert ZH_INGEST_HELP not in text
+    assert "command" in text
+    assert "指令" not in text
 
 
-def test_lang_zh_help_keeps_other_help_in_chinese(monkeypatch, tmp_path):
+def test_lang_zh_help_is_traditional_chinese(monkeypatch, tmp_path):
     code, out, err = invoke(monkeypatch, ["--lang", "zh", "--help"], cwd=tmp_path)
     assert code == EXIT_OK
     assert err == ""
@@ -686,8 +728,12 @@ def test_lang_zh_help_keeps_other_help_in_chinese(monkeypatch, tmp_path):
     assert "usage:" in out
     assert ZH_LANG_HELP in text
     assert EN_LANG_HELP not in text
-    assert HELP_DESCRIPTION in text
-    assert "把一個檔案入庫" in text
+    assert ZH_DESCRIPTION in text
+    assert EN_DESCRIPTION not in text
+    assert ZH_INGEST_HELP in text
+    assert EN_INGEST_HELP not in text
+    assert "指令" in text
+    assert "command" not in text
 
 
 def test_lang_flag_overrides_ui_language(monkeypatch, tmp_path):
@@ -746,7 +792,8 @@ def test_illegal_file_language_fails_commands_not_help(monkeypatch, tmp_path, va
     assert code == EXIT_USAGE
     assert out == ""
     assert err.strip() == _invalid(value, "ui.language")
-    assert HELP_DESCRIPTION not in flat(err)
+    assert EN_DESCRIPTION not in flat(err)
+    assert ZH_DESCRIPTION not in flat(err)
 
 
 @pytest.mark.parametrize("value", ["fr", "zh-Hant", "zh ", "ZH", "en-US"])
@@ -759,7 +806,8 @@ def test_invalid_lang_flag_does_not_adopt_the_file(monkeypatch, tmp_path, value)
     assert out == ""
     assert err.strip() == _invalid(value, "--lang")
     assert "語言值無效" not in err
-    assert HELP_DESCRIPTION not in flat(out + err)
+    assert EN_DESCRIPTION not in flat(out + err)
+    assert ZH_DESCRIPTION not in flat(out + err)
 
 
 def test_lang_equals_form(monkeypatch, tmp_path):
@@ -789,7 +837,8 @@ def test_lang_flag_without_a_value_does_not_print_help(monkeypatch, tmp_path, ar
     assert code == EXIT_USAGE
     assert err.strip() == _invalid("", "--lang")
     blob = flat(out + err)
-    assert HELP_DESCRIPTION not in blob
+    assert EN_DESCRIPTION not in blob
+    assert ZH_DESCRIPTION not in blob
     assert "usage:" not in blob
     assert ZH_LANG_HELP not in blob
 
@@ -825,9 +874,10 @@ def test_non_string_ui_language_uses_the_type_name(monkeypatch, tmp_path, body, 
 def test_config_flag_without_a_value_does_not_print_help(monkeypatch, tmp_path, argv):
     code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
     assert code == EXIT_USAGE
-    assert err.strip() == "缺少 --config 的值。"
+    assert err.strip() == EN_CONFIG_MISSING
     blob = flat(out + err)
-    assert HELP_DESCRIPTION not in blob
+    assert EN_DESCRIPTION not in blob
+    assert ZH_DESCRIPTION not in blob
     assert "usage:" not in blob
 
 
@@ -888,6 +938,8 @@ def test_parent_rag_toml_is_seen_before_help(monkeypatch, tmp_path):
     assert err == ""
     assert ZH_LANG_HELP in flat(out)
     assert EN_LANG_HELP not in flat(out)
+    assert ZH_DESCRIPTION in flat(out)
+    assert EN_DESCRIPTION not in flat(out)
     assert "usage:" in out
     code, out, err = invoke(monkeypatch, ["config", "show"], cwd=child)
     assert code == EXIT_OK, err
@@ -1094,7 +1146,8 @@ def test_prepare_language_prescan_table(monkeypatch, tmp_path):
     with pytest.raises(RagError) as caught:
         _prepare_language(["--lang", "zh", "--config"])
     assert caught.value.code == EXIT_USAGE
-    assert caught.value.message == "缺少 --config 的值。"
+    assert caught.value.message == ZH_CONFIG_MISSING
+    assert current_language() == "zh"
     set_language("zh")
     with pytest.raises(RagError) as caught:
         _prepare_language(["--lang", "fr", "--config"])
@@ -1122,6 +1175,50 @@ def test_lang_help_call_lives_in_add_globals():
         if any(_help_lang_call(child) for child in ast.walk(node)):
             owners.append("<module>")
     assert owners == ["_add_globals"]
+
+
+def _message_ids(node: ast.AST) -> list[str]:
+    found = []
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "t"
+            and child.args
+            and isinstance(child.args[0], ast.Constant)
+            and isinstance(child.args[0].value, str)
+        ):
+            found.append(child.args[0].value)
+    return found
+
+
+def test_help_text_is_translated_inside_parser_builders():
+    source = (REPO / "src" / "ragcli" / "cli.py").read_text(encoding="utf-8")
+    assert not any("\u4e00" <= char <= "\u9fff" for char in source)
+    tree = ast.parse(source)
+    module_ids: list[str] = []
+    by_function: dict[str, list[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            by_function[node.name] = _message_ids(node)
+        else:
+            module_ids.extend(_message_ids(node))
+    assert module_ids == []
+    help_owners = {
+        name
+        for name, ids in by_function.items()
+        if any(message_id.startswith("help.") for message_id in ids)
+    }
+    assert help_owners == {"build_parser", "_add_globals"}
+    help_calls = [
+        message_id
+        for ids in by_function.values()
+        for message_id in ids
+        if message_id.startswith("help.")
+    ]
+    assert len(help_calls) == 46
+    assert help_calls.count("help.metavar.action") == 2
+    assert "help.lang" in by_function["_add_globals"]
 
 
 def test_ui_language_log_uses_percent_s():

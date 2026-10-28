@@ -235,7 +235,7 @@ def test_cli_pull_writes_the_names_and_does_not_shell_out(monkeypatch, tmp_path)
     monkeypatch.setattr(subprocess, "run", boom)
     code, out, err = invoke(monkeypatch, ["models", "pull"], cwd=tmp_path)
     assert code == EXIT_OK, err
-    assert out == f"已拉取 {EMBED}\n已拉取 {NINE_B_MODEL}\n已拉取 {FOUR_B_MODEL}\n"
+    assert out == f"Pulled {EMBED}\nPulled {NINE_B_MODEL}\nPulled {FOUR_B_MODEL}\n"
     assert pulled(fake) == [EMBED, NINE_B_MODEL, FOUR_B_MODEL]
     assert "ollama pull" not in err
     assert "ollama pull" not in out
@@ -260,7 +260,7 @@ def test_cli_pull_flags(monkeypatch, tmp_path, argv, names):
     code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
     assert code == EXIT_OK, err
     assert pulled(fake) == names
-    assert out == "".join(f"已拉取 {name}\n" for name in names)
+    assert out == "".join(f"Pulled {name}\n" for name in names)
     assert "ollama pull" not in err
 
 
@@ -285,7 +285,7 @@ def test_cli_unload_clears_ps_and_reports_the_names(monkeypatch, tmp_path):
     use_fake(monkeypatch, fake)
     code, out, err = invoke(monkeypatch, ["models", "unload"], cwd=tmp_path)
     assert code == EXIT_OK, err
-    assert out == f"已卸載 {EMBED}\n"
+    assert out == f"Unloaded {EMBED}\n"
     assert fake.loaded == []
     assert fake.bodies("/api/embed") == [{"model": EMBED, "input": ".", "keep_alive": 0}]
     assert "ollama pull" not in err
@@ -297,7 +297,7 @@ def test_cli_unload_of_an_empty_ps(monkeypatch, tmp_path):
     use_fake(monkeypatch, fake)
     code, out, err = invoke(monkeypatch, ["models", "unload"], cwd=tmp_path)
     assert code == EXIT_OK, err
-    assert out == "沒有已載入的模型。\n"
+    assert out == "No models are loaded.\n"
     assert err == "" or "ollama pull" not in err
 
 
@@ -356,6 +356,8 @@ def test_models_pull_help_lists_the_flags(monkeypatch, tmp_path):
     assert err == ""
     for flag in ("--embed-only", "--generator-only", "--no-fallback-model", "--lock-timeout"):
         assert flag in out
+    assert "Pull only the embedding model" in out
+    assert "只拉取嵌入模型" not in out
 
 
 def test_new_data_dir_is_private(tmp_path):
