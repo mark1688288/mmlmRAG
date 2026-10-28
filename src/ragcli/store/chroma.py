@@ -29,6 +29,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import t
 from ragcli.store.sqlite import CHUNK_KINDS, chunk_id_for
 
 CHROMA_DIRNAME = "chroma"
@@ -158,15 +159,15 @@ def embedding_for_width(vec: Sequence[float], dimensions: int) -> list[float]:
         numbers = _finite_floats(vec)
         width = _dimensions(dimensions)
     except ValueError as exc:
-        raise RagError(EXIT_UNCLASSIFIED, str(exc)) from exc
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.embedding_invalid")) from exc
     if len(numbers) == width:
         return numbers
     if len(numbers) < width:
-        raise RagError(EXIT_MISMATCH, "向量寬度小於集合維度，不能加長。")
+        raise RagError(EXIT_MISMATCH, t("chroma.vector_shorter"))
     try:
         return truncate_normalize(numbers, width)
     except ValueError as exc:
-        raise RagError(EXIT_MISMATCH, "零向量不能截斷。") from exc
+        raise RagError(EXIT_MISMATCH, t("chroma.vector_zero")) from exc
 
 
 class ChromaIndex:
@@ -247,7 +248,7 @@ class ChromaIndex:
     ) -> list[QueryHit]:
         """Return nearest chunks. The query vector is fitted like a document."""
         if isinstance(n_results, bool) or not isinstance(n_results, int) or n_results < 1:
-            raise RagError(EXIT_USAGE, "n_results 必須是正整數。")
+            raise RagError(EXIT_USAGE, t("chroma.n_results"))
         vector = embedding_for_width(embedding, dimensions)
         collection = self._existing_collection(model, dimensions, embed_num_ctx)
         if collection.count() == 0:
@@ -285,7 +286,7 @@ class ChromaIndex:
                 collection.delete(ids=targets)
             return
         if model is None or dimensions is None or embed_num_ctx is None:
-            raise RagError(EXIT_USAGE, "刪除單一集合時要同時給模型、維度同 num_ctx。")
+            raise RagError(EXIT_USAGE, t("chroma.delete_needs_all"))
         collection = self._existing_collection(model, dimensions, embed_num_ctx)
         collection.delete(ids=targets)
 
@@ -310,11 +311,11 @@ class ChromaIndex:
         found_ids = _as_rows(result.get("ids")) if isinstance(result, dict) else None
         found_vectors = _as_rows(result.get("embeddings")) if isinstance(result, dict) else None
         if found_ids is None or found_vectors is None or len(found_ids) != len(found_vectors):
-            raise RagError(EXIT_UNCLASSIFIED, "Chroma 讀回的向量形狀不正確。")
+            raise RagError(EXIT_UNCLASSIFIED, t("chroma.vector_shape"))
         stored: dict[str, tuple[float, ...]] = {}
         for chunk_id, vector in zip(found_ids, found_vectors, strict=True):
             if vector is None:
-                raise RagError(EXIT_MISMATCH, "集合裡的向量缺失。")
+                raise RagError(EXIT_MISMATCH, t("chroma.vector_missing"))
             stored[str(chunk_id)] = tuple(float(value) for value in vector)
         return stored
 
@@ -328,18 +329,18 @@ class ChromaIndex:
         collection = self._open_named(name)
         metadata = getattr(collection, "metadata", None)
         if not isinstance(metadata, dict):
-            raise RagError(EXIT_MISMATCH, "集合 metadata 不完整。")
+            raise RagError(EXIT_MISMATCH, t("chroma.metadata_incomplete"))
         model = metadata.get("embed_model")
         dimensions = _optional_int(metadata.get("dimensions"))
         num_ctx = _optional_int(metadata.get("embed_num_ctx"))
         if not isinstance(model, str) or model.strip() == "" or dimensions is None or num_ctx is None:
-            raise RagError(EXIT_MISMATCH, "集合 metadata 不完整。")
+            raise RagError(EXIT_MISMATCH, t("chroma.metadata_incomplete"))
         try:
             expected = collection_name(model, dimensions)
         except ValueError as exc:
-            raise RagError(EXIT_MISMATCH, "集合名稱與嵌入模型不一致。") from exc
+            raise RagError(EXIT_MISMATCH, t("chroma.name_model")) from exc
         if expected != name or getattr(collection, "name", None) != name:
-            raise RagError(EXIT_MISMATCH, "集合名稱與 metadata 不一致。")
+            raise RagError(EXIT_MISMATCH, t("chroma.name_metadata"))
         spec = _collection_spec(model, dimensions, num_ctx)
         _require_contract(collection, spec)
         return CollectionInfo(
@@ -358,7 +359,7 @@ class ChromaIndex:
             if _is_missing_collection(exc):
                 self._collections.pop(name, None)
                 return
-            raise RagError(EXIT_UNCLASSIFIED, "刪不到集合。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("chroma.drop_failed")) from exc
         self._collections.pop(name, None)
 
     def chunk_ids(self, name: str) -> list[str]:
@@ -396,7 +397,7 @@ class ChromaIndex:
 
     def _open_named(self, name: str) -> Any:
         if not isinstance(name, str) or name.strip() == "" or "\x00" in name:
-            raise RagError(EXIT_MISMATCH, "集合名稱與 metadata 不一致。")
+            raise RagError(EXIT_MISMATCH, t("chroma.name_metadata"))
         cached = self._collections.get(name)
         if cached is not None:
             return cached
@@ -407,8 +408,8 @@ class ChromaIndex:
             )
         except Exception as exc:
             if _is_missing_collection(exc):
-                raise RagError(EXIT_NO_COLLECTION, "尚未有這個集合。") from exc
-            raise RagError(EXIT_MISMATCH, "讀不到這個集合。") from exc
+                raise RagError(EXIT_NO_COLLECTION, t("chroma.collection_missing")) from exc
+            raise RagError(EXIT_MISMATCH, t("chroma.read_failed")) from exc
         self._collections[name] = collection
         return collection
 
@@ -439,7 +440,7 @@ class ChromaIndex:
             )
         except Exception as exc:
             if _is_missing_collection(exc):
-                raise RagError(EXIT_NO_COLLECTION, "尚未有這個集合。") from exc
+                raise RagError(EXIT_NO_COLLECTION, t("chroma.collection_missing")) from exc
             raise
         _require_contract(collection, spec)
         self._collections[spec.name] = collection
@@ -447,7 +448,7 @@ class ChromaIndex:
 
     def _client_open(self) -> Any:
         if self._client is None:
-            raise RagError(EXIT_UNCLASSIFIED, "Chroma 已經關閉。")
+            raise RagError(EXIT_UNCLASSIFIED, t("chroma.closed"))
         return self._client
 
 
@@ -462,7 +463,7 @@ class _CollectionSpec:
 
 def _default_client_factory(path: Path, settings: Any) -> Any:
     if getattr(settings, "anonymized_telemetry", True) is not False:
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 遙測必須關閉。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.telemetry"))
     import chromadb
     from chromadb.config import Settings
 
@@ -478,7 +479,7 @@ def _collection_spec(model: str, dimensions: int, embed_num_ctx: int) -> _Collec
         width = _dimensions(dimensions)
         name = collection_name(raw, width)
     except ValueError as exc:
-        raise RagError(EXIT_MISMATCH, str(exc)) from exc
+        raise RagError(EXIT_MISMATCH, t("chroma.collection_spec_invalid")) from exc
     num_ctx = _num_ctx(embed_num_ctx)
     return _CollectionSpec(
         name=name,
@@ -520,45 +521,45 @@ def _embedding_function_attached(value: object) -> bool:
 
 def _require_contract(collection: Any, spec: _CollectionSpec) -> None:
     if getattr(collection, "name", None) != spec.name or ":" in spec.name:
-        raise RagError(EXIT_MISMATCH, "集合名稱與嵌入模型不一致。")
+        raise RagError(EXIT_MISMATCH, t("chroma.name_model"))
     configuration = _index_configuration(collection)
     hnsw = configuration.get("hnsw") if isinstance(configuration, dict) else None
     space = hnsw.get("space") if isinstance(hnsw, dict) else None
     if space != "cosine":
-        raise RagError(EXIT_MISMATCH, "集合的距離空間必須是 cosine。")
+        raise RagError(EXIT_MISMATCH, t("chroma.space_cosine"))
     stored_function = None if configuration is None else configuration.get("embedding_function")
     if _embedding_function_attached(stored_function):
-        raise RagError(EXIT_MISMATCH, "集合不可以帶嵌入函式。")
+        raise RagError(EXIT_MISMATCH, t("chroma.embedding_function"))
     if getattr(collection, "_embedding_function", None) is not None:
-        raise RagError(EXIT_MISMATCH, "集合不可以帶嵌入函式。")
+        raise RagError(EXIT_MISMATCH, t("chroma.embedding_function"))
     metadata = getattr(collection, "metadata", None)
     if not isinstance(metadata, dict):
-        raise RagError(EXIT_MISMATCH, "集合 metadata 不完整。")
+        raise RagError(EXIT_MISMATCH, t("chroma.metadata_incomplete"))
     if metadata.get("embed_model") != spec.model:
-        raise RagError(EXIT_MISMATCH, "集合的嵌入模型不一致。")
+        raise RagError(EXIT_MISMATCH, t("chroma.model_mismatch"))
     if _optional_int(metadata.get("dimensions")) != spec.dimensions:
-        raise RagError(EXIT_MISMATCH, "集合的維度不一致。")
+        raise RagError(EXIT_MISMATCH, t("chroma.dimensions_mismatch"))
     if _optional_int(metadata.get("embed_num_ctx")) != spec.embed_num_ctx:
-        raise RagError(EXIT_MISMATCH, "集合的 num_ctx 不一致。")
+        raise RagError(EXIT_MISMATCH, t("chroma.num_ctx_mismatch"))
 
 
 def _prepare_records(
     records: Sequence[IndexRecord], dimensions: int
 ) -> list[tuple[str, list[float], str, dict[str, Any]]]:
     if isinstance(records, (str, bytes, IndexRecord)) or not isinstance(records, Sequence):
-        raise RagError(EXIT_UNCLASSIFIED, "upsert 要收到多筆 IndexRecord。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.upsert_records"))
     try:
         width = _dimensions(dimensions)
     except ValueError as exc:
-        raise RagError(EXIT_MISMATCH, str(exc)) from exc
+        raise RagError(EXIT_MISMATCH, t("chroma.upsert_dimensions_invalid")) from exc
     prepared: list[tuple[str, list[float], str, dict[str, Any]]] = []
     seen: set[str] = set()
     for record in records:
         if not isinstance(record, IndexRecord):
-            raise RagError(EXIT_UNCLASSIFIED, "upsert 的每一筆都要是 IndexRecord。")
+            raise RagError(EXIT_UNCLASSIFIED, t("chroma.upsert_record_type"))
         item = _prepare_record(record, width)
         if item[0] in seen:
-            raise RagError(EXIT_UNCLASSIFIED, "同一批 upsert 的 chunk_id 重複。")
+            raise RagError(EXIT_UNCLASSIFIED, t("chroma.chunk_id_duplicate"))
         seen.add(item[0])
         prepared.append(item)
     return prepared
@@ -571,10 +572,10 @@ def _prepare_record(
     ordinal = _require_ordinal(record.ordinal)
     chunk_id = _require_text(record.chunk_id, "chunk_id")
     if chunk_id != chunk_id_for(doc_id, ordinal):
-        raise RagError(EXIT_UNCLASSIFIED, "chunk_id 與文件或序號不一致。")
-    text = _require_text(record.text, "區塊文字")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.chunk_id_mismatch"))
+    text = _require_chunk_text(record.text)
     if record.kind not in CHUNK_KINDS:
-        raise RagError(EXIT_UNCLASSIFIED, "kind 不在第一版。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.kind"))
     source_path = _require_text(record.source_path, "source_path")
     filename = _require_filename(record.filename)
     page_start, page_end = _pages(record.page_start, record.page_end)
@@ -591,22 +592,22 @@ def _prepare_record(
         "ordinal": ordinal,
     }
     if any(value is None for value in metadata.values()):
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma metadata 不可以是 None。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.metadata_none"))
     return chunk_id, vector, text, metadata
 
 
 def _hits(result: Any) -> list[QueryHit]:
     if not isinstance(result, dict):
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 查詢結果的形狀不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.query_shape"))
     if result.get("query_texts") not in (None, []):
-        raise RagError(EXIT_UNCLASSIFIED, "查詢不可以走 query_texts。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.query_texts"))
     ids = _query_column(result, "ids")
     documents = _query_column(result, "documents")
     metadatas = _query_column(result, "metadatas")
     distances = _query_column(result, "distances")
     width = len(ids)
     if len(documents) != width or len(metadatas) != width or len(distances) != width:
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 查詢結果的形狀不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.query_shape"))
     hits: list[QueryHit] = []
     for chunk_id, text, metadata, distance in zip(ids, documents, metadatas, distances, strict=True):
         hits.append(_hit(chunk_id, text, metadata, distance))
@@ -615,21 +616,21 @@ def _hits(result: Any) -> list[QueryHit]:
 
 def _hit(chunk_id: object, text: object, metadata: object, distance: object) -> QueryHit:
     if not isinstance(metadata, dict) or not set(_METADATA_KEYS) <= set(metadata):
-        raise RagError(EXIT_MISMATCH, "命中的 metadata 不完整。")
+        raise RagError(EXIT_MISMATCH, t("chroma.hit_metadata_incomplete"))
     if any(metadata[key] is None for key in _METADATA_KEYS):
-        raise RagError(EXIT_MISMATCH, "命中的 metadata 含有 None。")
+        raise RagError(EXIT_MISMATCH, t("chroma.hit_metadata_none"))
     page_start = _optional_int(metadata["page_start"])
     page_end = _optional_int(metadata["page_end"])
     ordinal = _optional_int(metadata["ordinal"])
     if page_start is None or page_end is None or ordinal is None:
-        raise RagError(EXIT_MISMATCH, "命中的 metadata 型別不正確。")
+        raise RagError(EXIT_MISMATCH, t("chroma.hit_metadata_type"))
     number = _finite_distance(distance)
     kind = metadata["kind"]
     if kind not in CHUNK_KINDS:
-        raise RagError(EXIT_MISMATCH, "命中的 kind 不在第一版。")
+        raise RagError(EXIT_MISMATCH, t("chroma.hit_kind"))
     return QueryHit(
         chunk_id=str(chunk_id),
-        text=_require_text(text, "區塊文字"),
+        text=_require_chunk_text(text),
         distance=number,
         doc_id=_require_doc_id(metadata["doc_id"]),
         source_path=_require_text(metadata["source_path"], "source_path"),
@@ -645,19 +646,19 @@ def _hit(chunk_id: object, text: object, metadata: object, distance: object) -> 
 def _query_column(result: dict[str, Any], key: str) -> list[Any]:
     rows = _as_rows(result.get(key))
     if rows is None or len(rows) != 1:
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 查詢結果的形狀不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.query_shape"))
     inner = _as_rows(rows[0])
     if inner is None:
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 查詢結果的形狀不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.query_shape"))
     return inner
 
 
 def _ids_of(result: object) -> list[str]:
     if not isinstance(result, dict):
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 讀回的 id 形狀不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.id_shape"))
     rows = _as_rows(result.get("ids"))
     if rows is None:
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma 讀回的 id 形狀不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.id_shape"))
     return [str(item) for item in rows]
 
 
@@ -678,13 +679,13 @@ def _as_rows(value: object) -> list[Any] | None:
 def _batch_size(client: Any) -> int:
     size = client.get_max_batch_size()
     if isinstance(size, bool) or not isinstance(size, int) or size < 1:
-        raise RagError(EXIT_UNCLASSIFIED, "Chroma batch 大小不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.batch_size"))
     return size
 
 
 def _id_list(ids: Sequence[str]) -> list[str]:
     if isinstance(ids, (str, bytes)) or not isinstance(ids, Sequence):
-        raise RagError(EXIT_UNCLASSIFIED, "刪除的 id 必須是字串序列。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.delete_ids"))
     cleaned: list[str] = []
     seen: set[str] = set()
     for chunk_id in ids:
@@ -725,7 +726,7 @@ def _dimensions(dimensions: int) -> int:
 
 def _num_ctx(value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > _MAX_NUM_CTX:
-        raise RagError(EXIT_MISMATCH, "embed_num_ctx 必須是 1 到 1000000 的整數。")
+        raise RagError(EXIT_MISMATCH, t("chroma.num_ctx_range"))
     return value
 
 
@@ -785,13 +786,13 @@ def _finite_floats(values: Sequence[float]) -> list[float]:
 
 def _finite_distance(value: object) -> float:
     if isinstance(value, (bool, str, bytes)):
-        raise RagError(EXIT_UNCLASSIFIED, "距離必須是有限數字。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.distance_finite"))
     try:
         number = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        raise RagError(EXIT_UNCLASSIFIED, "距離必須是有限數字。") from None
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.distance_finite")) from None
     if not math.isfinite(number):
-        raise RagError(EXIT_UNCLASSIFIED, "距離必須是有限數字。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.distance_finite"))
     return number
 
 
@@ -811,26 +812,32 @@ def _optional_int(value: object) -> int | None:
 
 def _require_doc_id(value: object) -> str:
     if not isinstance(value, str) or _DOC_ID.fullmatch(value) is None:
-        raise RagError(EXIT_UNCLASSIFIED, "doc_id 必須是 64 位小寫 hex。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.doc_id"))
     return value
 
 
 def _require_ordinal(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 999_999:
-        raise RagError(EXIT_UNCLASSIFIED, "ordinal 必須是 0 到 999999 的整數。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.ordinal_range"))
+    return value
+
+
+def _require_chunk_text(value: object) -> str:
+    if not isinstance(value, str) or value == "" or "\x00" in value:
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.chunk_text_nonempty"))
     return value
 
 
 def _require_text(value: object, label: str) -> str:
     if not isinstance(value, str) or value == "" or "\x00" in value:
-        raise RagError(EXIT_UNCLASSIFIED, f"{label} 必須是非空字串。")
+        raise RagError(EXIT_UNCLASSIFIED, t("config.nonempty_string", label=label))
     return value
 
 
 def _require_filename(value: object) -> str:
     filename = _require_text(value, "filename")
     if "/" in filename or "\\" in filename or filename in {".", ".."}:
-        raise RagError(EXIT_UNCLASSIFIED, "filename 必須是檔名。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.filename"))
     return filename
 
 
@@ -838,48 +845,48 @@ def _pages(page_start: object, page_end: object) -> tuple[int, int]:
     start = _optional_int(page_start)
     end = _optional_int(page_end)
     if start is None or end is None:
-        raise RagError(EXIT_UNCLASSIFIED, "頁碼必須是整數，沒有頁碼時用 -1。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.page_int"))
     absent = (start == -1, end == -1)
     if absent == (True, True):
         return -1, -1
     if any(absent):
-        raise RagError(EXIT_UNCLASSIFIED, "頁碼要同時有開始和結束，或同時是 -1。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.page_pair"))
     if start < 1 or end < 1 or start > _MAX_PAGE or end > _MAX_PAGE or end < start:
-        raise RagError(EXIT_UNCLASSIFIED, "頁碼範圍不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.page_range"))
     return start, end
 
 
 def _image_id(value: object, doc_id: str) -> str:
     if not isinstance(value, str) or "\x00" in value:
-        raise RagError(EXIT_UNCLASSIFIED, "image_id 必須是字串。")
+        raise RagError(EXIT_UNCLASSIFIED, t("chroma.image_id_type"))
     if value == "":
         return ""
     if _IMAGE_ID.fullmatch(value) is None or not value.startswith(doc_id[:12] + ":"):
-        raise RagError(EXIT_UNCLASSIFIED, "image_id 不屬於這份文件。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.image_id_document"))
     return value
 
 
 def _private_root(data_dir: Path) -> Path:
     if not isinstance(data_dir, Path):
-        raise RagError(EXIT_UNCLASSIFIED, "data_dir 必須是路徑。")
+        raise RagError(EXIT_UNCLASSIFIED, t("lock.data_dir_type"))
     if data_dir.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     return data_dir.expanduser().resolve()
 
 
 def _ensure_private_dir(path: Path) -> None:
     """Create ``path`` as 0700. An existing directory keeps its mode."""
     if path.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     if path.exists():
         if not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, f"資料路徑不是目錄：{path.name}")
+            raise RagError(EXIT_UNCLASSIFIED, t("io.data_path_not_directory", name=path.name))
         return
     try:
         path.mkdir(mode=_PRIVATE_DIR)
     except FileExistsError:
         if path.is_symlink() or not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。") from None
+            raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink")) from None
         return
     os.chmod(path, _PRIVATE_DIR)
 

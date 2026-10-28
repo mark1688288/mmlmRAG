@@ -604,7 +604,7 @@ def test_wider_than_native_is_exit_12(tmp_path):
         dimensions=8,
         embedding=(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     )
-    expect(lambda: corpus.ask("加長"), EXIT_MISMATCH, "不能加長")
+    expect(lambda: corpus.ask("加長"), EXIT_MISMATCH, "cannot be lengthened")
     assert corpus.collection(name).queries == []
     assert chats(corpus.fake) == []
     assert corpus.fake.loaded == []
@@ -614,7 +614,7 @@ def test_zero_head_cannot_be_truncated(tmp_path):
     corpus = Corpus(tmp_path)
     corpus.fake.vectors = [[0.0, 0.0, 0.0, 1.0]]
     corpus.seed([{"text": "零", "distance": 0.1}], dimensions=2)
-    expect(lambda: corpus.ask("零"), EXIT_MISMATCH, "零向量")
+    expect(lambda: corpus.ask("零"), EXIT_MISMATCH, "zero vector")
     assert chats(corpus.fake) == []
 
 

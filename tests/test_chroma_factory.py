@@ -320,7 +320,7 @@ def test_factory_passes_telemetry_cosine_and_no_embedding_function(tmp_path: Pat
     finally:
         index.close()
     assert client.closed
-    with pytest.raises(RagError, match="關閉"):
+    with pytest.raises(RagError, match="closed"):
         index.count(model=MODEL, dimensions=4, embed_num_ctx=NUM_CTX)
 
 
@@ -355,7 +355,7 @@ def test_symlink_directories_are_refused(tmp_path: Path):
     real.mkdir()
     link = tmp_path / "link"
     link.symlink_to(real, target_is_directory=True)
-    with pytest.raises(RagError, match="符號連結") as exc:
+    with pytest.raises(RagError, match="symbolic link") as exc:
         ChromaIndex.open(link)
     assert exc.value.code == EXIT_UNCLASSIFIED
 
@@ -364,7 +364,7 @@ def test_symlink_directories_are_refused(tmp_path: Path):
     outside = tmp_path / "outside"
     outside.mkdir()
     (data / CHROMA_DIRNAME).symlink_to(outside, target_is_directory=True)
-    with pytest.raises(RagError, match="符號連結"):
+    with pytest.raises(RagError, match="symbolic link"):
         ChromaIndex.open(data)
 
 
@@ -542,7 +542,7 @@ def test_persistent_client_rejects_a_collection_that_breaks_the_contract(tmp_pat
         with pytest.raises(RagError, match="cosine") as space:
             index.upsert([make_record()], model=MODEL, dimensions=4, embed_num_ctx=NUM_CTX)
         assert space.value.code == EXIT_MISMATCH
-        with pytest.raises(RagError, match="嵌入模型") as model:
+        with pytest.raises(RagError, match="embedding model") as model:
             index.upsert(
                 [make_record(embedding=(1.0,) * 8)],
                 model="qwen3-embedding:4b",

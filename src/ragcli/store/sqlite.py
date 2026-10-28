@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ragcli.errors import EXIT_MISMATCH, EXIT_NOT_FOUND, EXIT_UNCLASSIFIED, RagError
+from ragcli.i18n import t
 
 SCHEMA_VERSION = 1
 DB_FILENAME = "corpus.sqlite"
@@ -383,24 +384,24 @@ def storage_relpath(doc_id: str, image_id: str) -> str:
 def encode_vector(values: Sequence[float]) -> bytes:
     """Pack floats as little-endian float32."""
     if isinstance(values, (str, bytes)):
-        raise RagError(EXIT_UNCLASSIFIED, "向量必須是數字序列。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.vector_not_numbers"))
     numbers: list[float] = []
     for value in values:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise RagError(EXIT_UNCLASSIFIED, "向量必須是數字序列。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.vector_not_numbers"))
         number = float(value)
         if not math.isfinite(number):
-            raise RagError(EXIT_UNCLASSIFIED, "向量不能包含非有限數字。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.vector_nonfinite"))
         numbers.append(number)
     if not numbers:
-        raise RagError(EXIT_UNCLASSIFIED, "向量不能是空的。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.vector_empty"))
     return struct.pack("<" + "f" * len(numbers), *numbers)
 
 
 def decode_vector(blob: bytes) -> tuple[float, ...]:
     """Unpack a little-endian float32 blob."""
     if not isinstance(blob, bytes) or len(blob) % 4 != 0 or len(blob) == 0:
-        raise RagError(EXIT_MISMATCH, "向量 BLOB 長度不是 float32 寬度。")
+        raise RagError(EXIT_MISMATCH, t("store.blob_width"))
     count = len(blob) // 4
     return struct.unpack("<" + "f" * count, blob)
 
@@ -430,7 +431,7 @@ class SqliteStore:
             os.chmod(root, _PRIVATE_DIR)
         db_path = root / DB_FILENAME
         if db_path.is_symlink():
-            raise RagError(EXIT_UNCLASSIFIED, "資料庫路徑不能是符號連結。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.db_symlink"))
         created_db = not db_path.exists()
         if created_db:
             fd = os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, _PRIVATE_FILE)
@@ -439,7 +440,7 @@ class SqliteStore:
         try:
             connection = sqlite3.connect(db_path, isolation_level=None)
         except sqlite3.Error as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "打不開 SQLite。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("store.open_failed")) from exc
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         store = cls(root, db_path, connection)
@@ -482,7 +483,7 @@ class SqliteStore:
         except sqlite3.IntegrityError as exc:
             self._depth = depth
             _abort_transaction(conn, depth)
-            raise RagError(EXIT_UNCLASSIFIED, "SQLite 拒絕這次寫入。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("store.write_refused")) from exc
         except BaseException:
             self._depth = depth
             _abort_transaction(conn, depth)
@@ -492,7 +493,7 @@ class SqliteStore:
     def schema_version(self) -> int:
         row = self._connection().execute("SELECT MAX(version) FROM schema_migrations").fetchone()
         if row is None or row[0] != SCHEMA_VERSION:
-            raise RagError(EXIT_MISMATCH, _schema_refused())
+            raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
         return SCHEMA_VERSION
 
     def journal_mode(self) -> str:
@@ -507,10 +508,10 @@ class SqliteStore:
         doc = _validate_document(document)
         with self.transaction():
             if self.get_document(doc.doc_id) is not None:
-                raise RagError(EXIT_UNCLASSIFIED, "文件已存在。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.document_exists"))
             other = self.find_document_by_path(doc.source_path)
             if other is not None:
-                raise RagError(EXIT_UNCLASSIFIED, "這個路徑已經屬於另一份文件。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.path_owned"))
             self._execute(
                 """
                 INSERT INTO documents (
@@ -562,10 +563,10 @@ class SqliteStore:
         with self.transaction():
             current = self.get_document(doc_id)
             if current is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+                raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
             other = self.find_document_by_path(source_path)
             if other is not None and other.doc_id != doc_id:
-                raise RagError(EXIT_UNCLASSIFIED, "這個路徑已經屬於另一份文件。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.path_owned"))
             self._execute(
                 "UPDATE documents SET source_path = ?, filename = ? WHERE doc_id = ?",
                 (source_path, filename, doc_id),
@@ -605,7 +606,7 @@ class SqliteStore:
     ) -> None:
         """Insert one parsed file. The caller writes image bytes first."""
         if document.status != "parsed":
-            raise RagError(EXIT_UNCLASSIFIED, "解析提交時 documents.status 必須是 parsed。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.status_parsed"))
         with self.transaction():
             self.insert_document(document)
             for image in images:
@@ -673,11 +674,11 @@ class SqliteStore:
 
     def update_chunk_text(self, chunk_id: str, text: str, token_estimate: int) -> None:
         if not isinstance(text, str):
-            raise RagError(EXIT_UNCLASSIFIED, "text 必須是字串。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.text_type"))
         _require_small_int(token_estimate, "token_estimate", maximum=10_000_000, minimum=1)
         with self.transaction():
             if self.get_chunk(chunk_id) is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到區塊。")
+                raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
             self._execute(
                 "UPDATE chunks SET text = ?, token_estimate = ? WHERE chunk_id = ?",
                 (text, token_estimate, chunk_id),
@@ -687,7 +688,7 @@ class SqliteStore:
         _choice(embed_state, EMBED_STATES, "embed_state")
         with self.transaction():
             if self.get_chunk(chunk_id) is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到區塊。")
+                raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
             self._execute(
                 "UPDATE chunks SET embed_state = ? WHERE chunk_id = ?",
                 (embed_state, chunk_id),
@@ -696,7 +697,7 @@ class SqliteStore:
     def delete_chunk(self, chunk_id: str) -> None:
         with self.transaction():
             if self.get_chunk(chunk_id) is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到區塊。")
+                raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
             self._execute("DELETE FROM vectors WHERE chunk_id = ?", (chunk_id,))
             self._execute("DELETE FROM chunks WHERE chunk_id = ?", (chunk_id,))
 
@@ -704,7 +705,7 @@ class SqliteStore:
         record = _validate_image(image)
         with self.transaction():
             if self.get_image(record.image_id) is not None:
-                raise RagError(EXIT_UNCLASSIFIED, "圖像已存在。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.image_exists"))
             self._require_document(record.doc_id)
             self._execute(
                 """
@@ -735,9 +736,9 @@ class SqliteStore:
         with self.transaction():
             current = self.get_image(record.image_id)
             if current is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到圖像。")
+                raise RagError(EXIT_NOT_FOUND, t("store.image_missing"))
             if current.doc_id != record.doc_id or current.storage_relpath != record.storage_relpath:
-                raise RagError(EXIT_UNCLASSIFIED, "不能改圖像的文件或儲存路徑。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.image_identity"))
             self._execute(
                 """
                 UPDATE images SET
@@ -768,7 +769,7 @@ class SqliteStore:
         with self.transaction():
             current = self.get_image(image_id)
             if current is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到圖像。")
+                raise RagError(EXIT_NOT_FOUND, t("store.image_missing"))
             updated = current.duplicate_count + 1
             self._execute(
                 "UPDATE images SET duplicate_count = ? WHERE image_id = ?",
@@ -790,10 +791,10 @@ class SqliteStore:
         vector = _validate_vector(record)
         blob = encode_vector(vector.vector)
         if len(blob) != vector.native_dim * 4:
-            raise RagError(EXIT_MISMATCH, "向量長度與 native_dim 不一致。")
+            raise RagError(EXIT_MISMATCH, t("store.vector_width_mismatch"))
         with self.transaction():
             if self.get_chunk(vector.chunk_id) is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到區塊。")
+                raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
             self._execute(
                 """
                 INSERT INTO vectors (
@@ -839,7 +840,7 @@ class SqliteStore:
             return None
         unknown = set(found) - set(SETTING_KEYS)
         if unknown or set(found) != set(SETTING_KEYS):
-            raise RagError(EXIT_MISMATCH, "settings 的作用中指標不完整。")
+            raise RagError(EXIT_MISMATCH, t("store.active_pointer_incomplete"))
         return ActiveIndex(
             collection=found["active_collection"],
             embed_model=found["active_embed_model"],
@@ -868,11 +869,11 @@ class SqliteStore:
 
     def start_run(self, run: Run) -> None:
         if run.finished_at is not None or run.exit_code is not None:
-            raise RagError(EXIT_UNCLASSIFIED, "開始 runs 時尚未有結束時間或結束碼。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.run_open"))
         record = _validate_run(run)
         with self.transaction():
             if self.get_run(record.run_id) is not None:
-                raise RagError(EXIT_UNCLASSIFIED, "run_id 已存在。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.run_exists"))
             self._execute(
                 """
                 INSERT INTO runs (
@@ -914,9 +915,9 @@ class SqliteStore:
         with self.transaction():
             current = self.get_run(run_id)
             if current is None:
-                raise RagError(EXIT_NOT_FOUND, "找不到 run。")
+                raise RagError(EXIT_NOT_FOUND, t("store.run_missing"))
             if current.finished_at is not None:
-                raise RagError(EXIT_UNCLASSIFIED, "run 已經結束。")
+                raise RagError(EXIT_UNCLASSIFIED, t("store.run_finished"))
             finished = _validate_run(
                 Run(
                     run_id=current.run_id,
@@ -1005,7 +1006,7 @@ class SqliteStore:
     def write_image(self, doc_id: str, image_id: str, payload: bytes) -> str:
         """Write PNG bytes mode 0600. Return the relative storage path."""
         if not isinstance(payload, bytes):
-            raise RagError(EXIT_UNCLASSIFIED, "圖像內容必須是 bytes。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.image_bytes"))
         path = self.image_path(doc_id, image_id)
         _ensure_private_dir(path.parent)
         _assert_under(path, self.data_dir / "images")
@@ -1016,7 +1017,7 @@ class SqliteStore:
                 _PRIVATE_FILE,
             )
         except OSError as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "寫不到圖像檔。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("store.image_write_failed")) from exc
         try:
             os.write(fd, payload)
         finally:
@@ -1030,11 +1031,11 @@ class SqliteStore:
         root = self.data_dir / "images"
         path = root / doc_id
         if path.is_symlink():
-            raise RagError(EXIT_UNCLASSIFIED, "圖像目錄不能是符號連結。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.image_dir_symlink"))
         if not path.exists():
             return
         if not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, "圖像路徑必須是目錄。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.image_path_directory"))
         _assert_under(path, root)
         shutil.rmtree(path)
 
@@ -1047,7 +1048,7 @@ class SqliteStore:
             _require_known_schema(conn)
         mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()
         if str(mode[0]).lower() != "wal":
-            raise RagError(EXIT_UNCLASSIFIED, "SQLite 未能開啟 WAL。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.wal_failed"))
         if self._created_db:
             os.chmod(self.db_path, _PRIVATE_FILE)
         self._chmod_sidecars()
@@ -1089,10 +1090,10 @@ class SqliteStore:
     def _insert_chunk(self, chunk: Chunk) -> None:
         record = _validate_chunk(chunk)
         if self.get_chunk(record.chunk_id) is not None:
-            raise RagError(EXIT_UNCLASSIFIED, "區塊已存在。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.chunk_exists"))
         self._require_document(record.doc_id)
         if record.image_id is not None and self.get_image(record.image_id) is None:
-            raise RagError(EXIT_NOT_FOUND, "找不到區塊引用的圖像。")
+            raise RagError(EXIT_NOT_FOUND, t("store.chunk_image_missing"))
         self._execute(
             """
             INSERT INTO chunks (
@@ -1131,7 +1132,7 @@ class SqliteStore:
     def _require_document(self, doc_id: str) -> Document:
         document = self.get_document(doc_id)
         if document is None:
-            raise RagError(EXIT_NOT_FOUND, "找不到文件。")
+            raise RagError(EXIT_NOT_FOUND, t("store.document_missing"))
         return document
 
     def _chmod_sidecars(self) -> None:
@@ -1144,11 +1145,11 @@ class SqliteStore:
         try:
             self._connection().execute(sql, params)
         except sqlite3.IntegrityError as exc:
-            raise RagError(EXIT_UNCLASSIFIED, "SQLite 拒絕這次寫入。") from exc
+            raise RagError(EXIT_UNCLASSIFIED, t("store.write_refused")) from exc
 
     def _connection(self) -> sqlite3.Connection:
         if self._conn is None:
-            raise RagError(EXIT_UNCLASSIFIED, "SQLite 已經關閉。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.closed"))
         return self._conn
 
 
@@ -1167,10 +1168,6 @@ def _abort_transaction(conn: sqlite3.Connection, depth: int) -> None:
                 pass
 
 
-def _schema_refused() -> str:
-    return "SQLite 綱要不符合 schema_version=1。請從 data/ 備份還原，程式不會就地改寫。"
-
-
 def _table_names(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
@@ -1182,26 +1179,26 @@ def _require_known_schema(conn: sqlite3.Connection) -> None:
     tables = _table_names(conn)
     expected = set(_TABLE_COLUMNS)
     if tables != expected or "schema_migrations" not in tables:
-        raise RagError(EXIT_MISMATCH, _schema_refused())
+        raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
     versions = [
         int(row[0])
         for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
     ]
     if versions != [SCHEMA_VERSION]:
-        raise RagError(EXIT_MISMATCH, _schema_refused())
+        raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
     for table, columns in _TABLE_COLUMNS.items():
         found = tuple(
             str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")
         )
         if found != columns:
-            raise RagError(EXIT_MISMATCH, _schema_refused())
+            raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
 
 
 def _private_root(data_dir: Path) -> Path:
     if not isinstance(data_dir, Path):
-        raise RagError(EXIT_UNCLASSIFIED, "data_dir 必須是路徑。")
+        raise RagError(EXIT_UNCLASSIFIED, t("lock.data_dir_type"))
     if data_dir.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     return data_dir.expanduser().resolve()
 
 
@@ -1211,16 +1208,16 @@ def _ensure_private_dir(path: Path) -> bool:
     An existing directory is left alone, including one the user chmod'd later.
     """
     if path.is_symlink():
-        raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。")
+        raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink"))
     if path.exists():
         if not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, f"資料路徑不是目錄：{path.name}")
+            raise RagError(EXIT_UNCLASSIFIED, t("io.data_path_not_directory", name=path.name))
         return False
     try:
         path.mkdir(mode=_PRIVATE_DIR)
     except FileExistsError:
         if path.is_symlink() or not path.is_dir():
-            raise RagError(EXIT_UNCLASSIFIED, "資料目錄不能是符號連結。") from None
+            raise RagError(EXIT_UNCLASSIFIED, t("io.data_dir_symlink")) from None
         return False
     os.chmod(path, _PRIVATE_DIR)
     return True
@@ -1234,21 +1231,21 @@ def _assert_under(path: Path, root: Path) -> None:
     root_abs = root if root.is_absolute() else root.absolute()
     path_abs = path if path.is_absolute() else path.absolute()
     if root_abs.is_symlink() or path_abs == root_abs or not path_abs.is_relative_to(root_abs):
-        raise RagError(EXIT_UNCLASSIFIED, "圖像路徑必須留在 data/images 之下。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.image_path_outside"))
     cursor = path_abs
     while cursor != root_abs:
         if cursor.is_symlink():
-            raise RagError(EXIT_UNCLASSIFIED, "圖像路徑不能經過符號連結。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.image_path_symlink"))
         parent = cursor.parent
         if parent == cursor:
-            raise RagError(EXIT_UNCLASSIFIED, "圖像路徑必須留在 data/images 之下。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.image_path_outside"))
         cursor = parent
 
 
 def _validate_document(document: Document) -> Document:
     _require_doc_id(document.doc_id)
     if document.sha256 != document.doc_id:
-        raise RagError(EXIT_UNCLASSIFIED, "sha256 必須等於 doc_id。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.sha256_doc_id"))
     _choice(document.media_type, MEDIA_TYPES, "media_type")
     _choice(document.parser, PARSERS, "parser")
     _choice(document.status, DOCUMENT_STATUSES, "documents.status")
@@ -1268,9 +1265,9 @@ def _validate_chunk(chunk: Chunk) -> Chunk:
     _require_doc_id(chunk.doc_id)
     expected = chunk_id_for(chunk.doc_id, chunk.ordinal)
     if chunk.chunk_id != expected:
-        raise RagError(EXIT_UNCLASSIFIED, f"chunk_id 必須是 {expected}。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.chunk_id_expected", expected=expected))
     if not isinstance(chunk.text, str):
-        raise RagError(EXIT_UNCLASSIFIED, "text 必須是字串。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.text_type"))
     _choice(chunk.kind, CHUNK_KINDS, "chunks.kind")
     _choice(chunk.embed_state, EMBED_STATES, "embed_state")
     _require_small_int(chunk.token_estimate, "token_estimate", maximum=10_000_000, minimum=1)
@@ -1281,16 +1278,16 @@ def _validate_chunk(chunk: Chunk) -> Chunk:
         _require_image_identity(chunk.doc_id, chunk.image_id)
     if chunk.anchor_chunk_id is not None:
         if not chunk.anchor_chunk_id.startswith(chunk.doc_id[:12] + ":"):
-            raise RagError(EXIT_UNCLASSIFIED, "anchor_chunk_id 不屬於這份文件。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.anchor_chunk"))
     return chunk
 
 
 def _validate_image(image: ImageRecord) -> ImageRecord:
     _require_image_identity(image.doc_id, image.image_id)
     if image.storage_relpath != storage_relpath(image.doc_id, image.image_id):
-        raise RagError(EXIT_UNCLASSIFIED, "storage_relpath 必須是 data/images 下的程式路徑。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.storage_relpath"))
     if not _SHA256.fullmatch(image.sha256):
-        raise RagError(EXIT_UNCLASSIFIED, "圖像 sha256 必須是 64 位小寫十六進位。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.image_sha256"))
     _choice(image.kind, IMAGE_KINDS, "images.kind")
     _choice(image.status, IMAGE_STATUSES, "images.status")
     if image.route is not None:
@@ -1310,9 +1307,9 @@ def _validate_image(image: ImageRecord) -> ImageRecord:
     confidence = image.ocr_confidence
     if confidence is not None:
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-            raise RagError(EXIT_UNCLASSIFIED, "ocr_confidence 必須是 0 到 1 的數字。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.confidence_range"))
         if not math.isfinite(float(confidence)) or not 0 <= float(confidence) <= 1:
-            raise RagError(EXIT_UNCLASSIFIED, "ocr_confidence 必須是 0 到 1 的數字。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.confidence_range"))
     return image
 
 
@@ -1323,7 +1320,7 @@ def _validate_vector(record: VectorRecord) -> VectorRecord:
     _require_small_int(record.native_dim, "native_dim", maximum=100_000, minimum=1)
     _require_small_int(record.num_ctx, "num_ctx", maximum=1_000_000, minimum=1)
     if len(record.vector) != record.native_dim:
-        raise RagError(EXIT_MISMATCH, "向量長度與 native_dim 不一致。")
+        raise RagError(EXIT_MISMATCH, t("store.vector_width_mismatch"))
     encode_vector(record.vector)
     return record
 
@@ -1341,15 +1338,15 @@ def _validate_run(run: Run) -> Run:
         _require_text(run.model_name, "model_name")
     if run.command != "ask":
         if run.ask_latency_ms is not None:
-            raise RagError(EXIT_UNCLASSIFIED, "不是 ask 時 ask_latency_ms 必須是 NULL。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.ask_latency_null"))
         if run.refused_count != 0:
-            raise RagError(EXIT_UNCLASSIFIED, "不是 ask 時 refused_count 必須是 0。")
+            raise RagError(EXIT_UNCLASSIFIED, t("store.refused_count_zero"))
     elif run.finished_at is not None and run.ask_latency_ms is None:
-        raise RagError(EXIT_UNCLASSIFIED, "ask 結束時要填 ask_latency_ms。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.ask_latency_required"))
     if run.ask_latency_ms is not None:
         _require_small_int(run.ask_latency_ms, "ask_latency_ms", maximum=3_600_000)
     if (run.finished_at is None) != (run.exit_code is None):
-        raise RagError(EXIT_UNCLASSIFIED, "finished_at 與 exit_code 要同時有或同時沒有。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.run_finished_pair"))
     if run.finished_at is not None:
         _require_text(run.finished_at, "finished_at")
         _require_small_int(run.exit_code if run.exit_code is not None else -1, "exit_code", maximum=255)
@@ -1359,7 +1356,7 @@ def _validate_run(run: Run) -> Run:
 def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
     values = decode_vector(row["vector"])
     if len(values) != int(row["native_dim"]):
-        raise RagError(EXIT_MISMATCH, "向量長度與 native_dim 不一致。")
+        raise RagError(EXIT_MISMATCH, t("store.vector_width_mismatch"))
     return VectorRecord(
         chunk_id=row["chunk_id"],
         embed_model=row["embed_model"],
@@ -1466,34 +1463,34 @@ def _run_from_row(row: sqlite3.Row) -> Run:
 
 def _choice(value: str, allowed: frozenset[str], label: str) -> str:
     if value not in allowed:
-        names = "、".join(sorted(allowed))
-        raise RagError(EXIT_UNCLASSIFIED, f"{label} 只可以是 {names}。")
+        names = t("config.list_joiner").join(sorted(allowed))
+        raise RagError(EXIT_UNCLASSIFIED, t("store.choice", label=label, names=names))
     return value
 
 
 def _require_doc_id(doc_id: str) -> str:
     if not isinstance(doc_id, str) or _DOC_ID.fullmatch(doc_id) is None:
-        raise RagError(EXIT_UNCLASSIFIED, "doc_id 必須是 64 位小寫十六進位。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.doc_id"))
     return doc_id
 
 
 def _require_image_identity(doc_id: str, image_id: str) -> None:
     _require_doc_id(doc_id)
     if not isinstance(image_id, str) or _IMAGE_ID.fullmatch(image_id) is None:
-        raise RagError(EXIT_UNCLASSIFIED, "image_id 格式不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.image_id_format"))
     if not image_id.startswith(doc_id[:12] + ":"):
-        raise RagError(EXIT_UNCLASSIFIED, "image_id 不屬於這份文件。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.image_id_document"))
 
 
 def _require_text(value: str, label: str) -> str:
     if not isinstance(value, str) or value == "" or "\x00" in value:
-        raise RagError(EXIT_UNCLASSIFIED, f"{label} 必須是非空字串。")
+        raise RagError(EXIT_UNCLASSIFIED, t("config.nonempty_string", label=label))
     return value
 
 
 def _require_optional_text(value: str, label: str) -> str:
     if not isinstance(value, str) or "\x00" in value:
-        raise RagError(EXIT_UNCLASSIFIED, f"{label} 必須是字串。")
+        raise RagError(EXIT_UNCLASSIFIED, t("config.must_be_string", label=label))
     return value
 
 
@@ -1503,7 +1500,7 @@ def _require_small_int(
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum or value > maximum:
         raise RagError(
             EXIT_UNCLASSIFIED,
-            f"{label} 必須是 {minimum} 到 {maximum} 的整數。",
+            t("store.int_range", label=label, minimum=minimum, maximum=maximum),
         )
     return value
 
@@ -1514,14 +1511,14 @@ def _require_page_pair(page_start: int | None, page_end: int | None) -> None:
     if page_end is not None:
         _require_small_int(page_end, "page_end", maximum=1_000_000, minimum=1)
     if page_start is not None and page_end is not None and page_end < page_start:
-        raise RagError(EXIT_UNCLASSIFIED, "page_end 不能小於 page_start。")
+        raise RagError(EXIT_UNCLASSIFIED, t("store.page_order"))
 
 
 def _setting_int(value: str) -> int:
     try:
         number = int(value, 10)
     except ValueError as exc:
-        raise RagError(EXIT_MISMATCH, "settings 的作用中指標不完整。") from exc
+        raise RagError(EXIT_MISMATCH, t("store.active_pointer_incomplete")) from exc
     if str(number) != value or number < 1:
-        raise RagError(EXIT_MISMATCH, "settings 的作用中指標不完整。")
+        raise RagError(EXIT_MISMATCH, t("store.active_pointer_incomplete"))
     return number

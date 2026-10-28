@@ -472,7 +472,7 @@ def test_commit_parsed_rolls_back_and_later_insert_works(store: SqliteStore):
 def test_missing_anchor_does_not_leave_a_chunk(store: SqliteStore):
     store.insert_document(make_document())
     chunk = make_chunk(anchor_chunk_id=chunk_id_for(DOC, 9))
-    with pytest.raises(RagError, match="拒絕"):
+    with pytest.raises(RagError, match="refused"):
         store.insert_chunk(chunk)
     assert store.get_chunk(chunk.chunk_id) is None
     store.insert_chunk(make_chunk())
@@ -484,9 +484,9 @@ def test_status_and_identity_rejections(store: SqliteStore):
     with pytest.raises(RagError, match="sha256"):
         store.insert_document(make_document(sha256="d" * 64))
     store.insert_document(make_document())
-    with pytest.raises(RagError, match="已存在"):
+    with pytest.raises(RagError, match="already exists"):
         store.insert_document(make_document())
-    with pytest.raises(RagError, match="路徑"):
+    with pytest.raises(RagError, match="path"):
         store.insert_document(make_document(DOC_B, source_path=f"/docs/{DOC}.pdf"))
     with pytest.raises(RagError) as missing:
         store.set_document_status("e" * 64, "complete")
@@ -565,8 +565,8 @@ def test_newer_or_drifted_schema_is_refused_without_rewrite(tmp_path: Path):
     with pytest.raises(RagError) as exc:
         SqliteStore.open(data)
     assert exc.value.code == EXIT_MISMATCH
-    assert "備份" in exc.value.message
-    assert "不會就地改寫" in exc.value.message
+    assert "backup" in exc.value.message
+    assert "will not rewrite it in place" in exc.value.message
     assert (orphan / "keep.txt").read_text(encoding="utf-8") == SECRET
     conn = sqlite3.connect(db_path)
     assert conn.execute("SELECT title FROM documents").fetchone()[0] == SECRET
@@ -667,7 +667,7 @@ def test_data_dir_symlink_is_refused(tmp_path: Path):
     real.mkdir()
     link = tmp_path / "link"
     link.symlink_to(real, target_is_directory=True)
-    with pytest.raises(RagError, match="符號連結"):
+    with pytest.raises(RagError, match="symbolic link"):
         SqliteStore.open(link)
     assert not (real / "corpus.sqlite").exists()
 

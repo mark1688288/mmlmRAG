@@ -381,7 +381,7 @@ def test_zero_vector_cannot_be_truncated(tmp_path, monkeypatch):
         add_document(store)
         chunk = add_chunk(store, DOC, 0, "零", embed_state="done")
         add_vector(store, chunk, vector=(0.0, 0.0, 0.0, 0.0))
-    expect(lambda: run_reembed(config, dimensions=2), EXIT_MISMATCH, "零向量不能截斷。")
+    expect(lambda: run_reembed(config, dimensions=2), EXIT_MISMATCH, "A zero vector cannot be truncated.")
     assert collection_name(EMBED, 2) not in collection_names(config)
     code = run_reembed(config, clock=lambda: LATER)
     assert code == EXIT_OK
@@ -574,7 +574,7 @@ def test_no_activate_and_drop_old(tmp_path, monkeypatch, capsys):
     assert "The active pointer still points at the deleted collection." in dropped.err
     assert wide not in collection_names(config)
     assert short in collection_names(config)
-    expect(lambda: run_use(config, wide), EXIT_NO_COLLECTION, "尚未有這個集合。")
+    expect(lambda: run_use(config, wide), EXIT_NO_COLLECTION, "There is no such collection yet.")
     assert active_of(config) is not None and active_of(config).collection == wide
     assert run_use(config, short, clock=lambda: LATER) == EXIT_OK
     pointer = active_of(config)
@@ -647,10 +647,10 @@ def test_use_switches_pointer_and_rejects_metadata_mismatch(tmp_path, monkeypatc
     expect(
         lambda: run_use(config, name, client_factory=factory),
         EXIT_MISMATCH,
-        "集合名稱與 metadata 不一致。",
+        "The collection name does not match the metadata.",
     )
     assert active_of(config) == pointer
-    expect(lambda: run_use(config, "emb-missing-d4"), EXIT_NO_COLLECTION, "尚未有這個集合。")
+    expect(lambda: run_use(config, "emb-missing-d4"), EXIT_NO_COLLECTION, "There is no such collection yet.")
     assert active_of(config) == pointer
 
 
