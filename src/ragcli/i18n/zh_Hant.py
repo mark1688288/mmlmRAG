@@ -129,4 +129,28 @@ MESSAGES = {
     "log.collection": "集合 {name}",
     "log.unload_failed": "卸載 {model} 失敗。",
     "log.exit_code": "結束碼 {code}",
+    "ask.refusal": "資料中找不到答案。",
+    "ask.prefix_warning": "查詢前綴是為 Qwen3-Embedding 寫的，這個模型可能不適用。",
+    "ask.no_active_collection": "尚未有作用中集合。",
+    "ask.chunk_text_type": "區塊文字必須是字串。",
+    "ask.question_too_long": "問題超過 {limit} 個估算 token，不截斷問題。",
+    "ask.budget_type": "包裝預算不是整數。",
+    "ask.excerpt_unfit": "連一個區塊都放不進上下文，不送出半截提示。",
+    "ask.unfinished_chunks": "仍有未完成嵌入的區塊，請先執行 rag ingest --resume。",
+    "ask.metadata_mismatch": "作用中集合與 metadata 不一致。",
+    "ask.native_width": "嵌入回傳的寬度不是這個模型的原生寬度。",
+    "ask.embed_count": "Ollama 嵌入結果數量不正確。",
+    "ask.empty_generation": "生成結果是空的，請再試一次。",
+    "ask.models_still_loaded": "卸載後仍有其他模型。",
+    "ask.k_range": "--k 必須是 1 到 8 的整數。",
+    "model.name_invalid": "模型名稱不符合允許的格式。",
+    "log.query_collection": "查詢集合 {name}",
+    "log.no_close_hit": "沒有足夠接近的命中，拒絕回答。",
+    "log.model_refused": "模型拒絕回答。",
+    "log.generator": "生成模型 {name}",
+    "status.hit": (
+        "chunk_id={chunk_id} filename={filename}{page} "
+        "distance={distance} kind={kind}"
+    ),
+    "status.hit.page": " 頁={page}",
 }

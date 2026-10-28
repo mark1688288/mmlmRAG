@@ -635,7 +635,7 @@ def test_ask_reads_stdin_without_echoing_it(monkeypatch, tmp_path):
     assert code == EXIT_NO_COLLECTION
     assert question not in out
     assert question not in err
-    assert "尚未有作用中集合" in err
+    assert "There is no active collection." in err
 
 
 def test_ask_argument_does_not_read_stdin(monkeypatch, tmp_path):

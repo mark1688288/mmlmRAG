@@ -129,4 +129,40 @@ MESSAGES = {
     "log.collection": "Collection {name}",
     "log.unload_failed": "Failed to unload {model}.",
     "log.exit_code": "Exit code {code}",
+    "ask.refusal": "The documents do not contain the answer.",
+    "ask.prefix_warning": (
+        "The query prefix was written for Qwen3-Embedding, "
+        "and this model may not apply."
+    ),
+    "ask.no_active_collection": "There is no active collection.",
+    "ask.chunk_text_type": "Chunk text must be a string.",
+    "ask.question_too_long": (
+        "The question exceeds {limit} estimated tokens. "
+        "The question is not shortened."
+    ),
+    "ask.budget_type": "The packing budget is not an integer.",
+    "ask.excerpt_unfit": (
+        "Not even one chunk fits in the context. A partial prompt is not sent."
+    ),
+    "ask.unfinished_chunks": (
+        "Some chunks are still not embedded. Run rag ingest --resume."
+    ),
+    "ask.metadata_mismatch": "The active collection does not match the metadata.",
+    "ask.native_width": (
+        "The returned embedding width is not this model's native width."
+    ),
+    "ask.embed_count": "The Ollama embedding result count is incorrect.",
+    "ask.empty_generation": "The generation result is empty. Try again.",
+    "ask.models_still_loaded": "Other models are still loaded after unloading.",
+    "ask.k_range": "--k must be an integer from 1 to 8.",
+    "model.name_invalid": "The model name does not match the allowed format.",
+    "log.query_collection": "Query collection {name}",
+    "log.no_close_hit": "No hit is close enough. Refusing to answer.",
+    "log.model_refused": "The model refused to answer.",
+    "log.generator": "Generator model {name}",
+    "status.hit": (
+        "chunk_id={chunk_id} filename={filename}{page} "
+        "distance={distance} kind={kind}"
+    ),
+    "status.hit.page": " page={page}",
 }

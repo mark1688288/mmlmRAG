@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from ragcli.ask import (
-    PREFIX_WARNING,
     document_embed_text,
     pack_excerpts,
     query_text,
@@ -37,8 +36,16 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import set_language
 from ragcli.ollama import FOUR_B_MODEL, NINE_B_MODEL
-from ragcli.prompt import REFUSAL_SENTENCE, SYSTEM_PROMPT, Excerpt, format_excerpt, format_user_message
+from ragcli.prompt import (
+    Excerpt,
+    format_excerpt,
+    format_user_message,
+    is_refusal,
+    refusal_sentence,
+    system_prompt,
+)
 from ragcli.store.chroma import ChromaIndex, IndexRecord
 from ragcli.store.sqlite import ActiveIndex, SqliteStore, chunk_id_for
 from test_chroma_factory import FakeClient
@@ -52,6 +59,10 @@ WHEN = "2026-10-26T00:00:00+00:00"
 VECTOR = (3.0, 0.0, 0.0, 4.0)
 PLENTY = 20_000_000_000
 SEVEN_GIB = 7 * 1024**3
+_PREFIX_WARNING = (
+    "The query prefix was written for Qwen3-Embedding, "
+    "and this model may not apply."
+)
 
 
 def write_rag(
@@ -219,6 +230,13 @@ def chats(fake: FakeOllama) -> list:
 
 
 @pytest.fixture(autouse=True)
+def reset_language():
+    set_language("en")
+    yield
+    set_language("en")
+
+
+@pytest.fixture(autouse=True)
 def no_live_ollama(monkeypatch):
     monkeypatch.setattr(
         "ragcli.ask.available_bytes",
@@ -250,7 +268,7 @@ def test_document_text_is_not_prefixed():
 def test_question_limit_rejects_without_truncating():
     require_question_limit("文" * 511, 512)
     assert estimate_tokens("文" * 511) == 512
-    caught = expect(lambda: require_question_limit("文" * 512, 512), EXIT_QUESTION, "不截斷問題")
+    caught = expect(lambda: require_question_limit("文" * 512, 512), EXIT_QUESTION, "not shortened")
     assert "文文文" not in caught.message
 
 
@@ -275,7 +293,7 @@ def test_pack_stops_when_the_next_chunk_does_not_fit():
 
 def test_pack_rejects_when_the_first_chunk_does_not_fit():
     excerpt = Excerpt("only", "a.pdf", -1, "text", "整段都要留下", 0.1)
-    caught = expect(lambda: pack_excerpts([excerpt], 1), EXIT_QUESTION, "不送出半截提示")
+    caught = expect(lambda: pack_excerpts([excerpt], 1), EXIT_QUESTION, "partial prompt")
     assert "整段都要留下" not in caught.message
     assert excerpt.text not in caught.message
 
@@ -289,26 +307,45 @@ def test_user_message_omits_a_missing_page_and_keeps_the_system_template():
     assert "來源=a.txt chunk=c1 種類=ocr" in hidden
     assert hidden.startswith("問題：\n問題本身\n\n摘錄：\n[1] ")
     assert "頁=4" in shown
-    assert "[來源: {filename} p.{page} #{chunk_id}]" in SYSTEM_PROMPT
-    assert REFUSAL_SENTENCE in SYSTEM_PROMPT
-    assert is_refusal_sentence()
+    prompt = system_prompt()
+    assert "[來源: {filename} p.{page} #{chunk_id}]" in prompt
+    assert "{filename}" in prompt
+    assert refusal_sentence() in prompt
 
 
-def is_refusal_sentence() -> bool:
-    from ragcli.prompt import is_refusal
+def test_refusal_sentence_follows_the_catalog_and_the_prompt():
+    english = "The documents do not contain the answer."
+    chinese = "資料中找不到答案。"
+    set_language("en")
+    prompt = system_prompt()
+    assert prompt.count(english) == 1
+    assert "{filename}" in prompt
+    assert "不得譯成問題的語言" in prompt
+    assert "{refusal}" not in prompt
+    assert is_refusal(f"  {english}\n")
+    assert not is_refusal(english + " extra")
+    assert not is_refusal(chinese)
 
-    return is_refusal(f"  {REFUSAL_SENTENCE}\n") and not is_refusal(REFUSAL_SENTENCE + " extra")
+    set_language("zh")
+    prompt = system_prompt()
+    assert refusal_sentence() == chinese
+    assert prompt.count(chinese) == 1
+    assert "{filename}" in prompt
+    assert "不得譯成問題的語言" in prompt
+    assert "{refusal}" not in prompt
+    assert is_refusal(f"  {chinese}\n")
+    assert not is_refusal(english)
 
 
 def test_low_disk_does_not_open_the_corpus(tmp_path):
     corpus = Corpus(tmp_path, min_free=1)
-    expect(lambda: corpus.ask("問題", free_bytes=lambda: 0), EXIT_DISK, "磁碟剩餘")
+    expect(lambda: corpus.ask("問題", free_bytes=lambda: 0), EXIT_DISK, "Free disk space")
     assert not corpus.config.data_dir.exists()
 
 
 def test_blank_question_and_k_are_usage_errors(tmp_path):
     corpus = Corpus(tmp_path)
-    expect(lambda: corpus.ask("  "), EXIT_USAGE, "缺少問題")
+    expect(lambda: corpus.ask("  "), EXIT_USAGE, "Missing question")
     expect(lambda: corpus.ask("問題", k=9), EXIT_USAGE, "--k")
     assert not corpus.config.data_dir.exists()
     assert corpus.fake.seen == []
@@ -335,9 +372,15 @@ def test_unfinished_chunks_exit_12_without_calling_ollama(tmp_path, state):
     assert SECRET_CHUNK not in log_text(corpus.config)
 
 
+def test_missing_active_collection_follows_zh(tmp_path):
+    set_language("zh")
+    corpus = Corpus(tmp_path)
+    expect(lambda: corpus.ask("有集合嗎"), EXIT_NO_COLLECTION, "尚未有作用中集合。")
+
+
 def test_missing_active_collection_is_exit_11(tmp_path):
     corpus = Corpus(tmp_path)
-    expect(lambda: corpus.ask("有集合嗎"), EXIT_NO_COLLECTION, "尚未有作用中集合")
+    expect(lambda: corpus.ask("有集合嗎"), EXIT_NO_COLLECTION, "There is no active collection.")
     assert corpus.fake.seen == []
     run = latest_run(corpus.config)
     assert run.exit_code == EXIT_NO_COLLECTION
@@ -349,7 +392,7 @@ def test_long_question_is_exit_9_and_is_not_sent(tmp_path):
     corpus = Corpus(tmp_path)
     corpus.seed([{"text": "短區塊", "distance": 0.1}])
     question = "問" * 600
-    caught = expect(lambda: corpus.ask(question), EXIT_QUESTION, "不截斷問題")
+    caught = expect(lambda: corpus.ask(question), EXIT_QUESTION, "not shortened")
     assert question not in caught.message
     assert corpus.fake.seen == []
     run = latest_run(corpus.config)
@@ -368,7 +411,7 @@ def test_distance_gate_refuses_without_a_generator(tmp_path, capsys):
     code = corpus.ask(SECRET_QUESTION, show_chunks=True)
     out = capsys.readouterr()
     assert code == EXIT_OK
-    assert out.out == REFUSAL_SENTENCE + "\n"
+    assert out.out == "The documents do not contain the answer.\n"
     assert SECRET_CHUNK not in out.err
     assert SECRET_QUESTION not in out.err
     assert "頁=" not in out.err
@@ -398,16 +441,24 @@ def test_empty_collection_refuses_without_chat(tmp_path, capsys):
     corpus = Corpus(tmp_path)
     corpus.seed([])
     assert corpus.ask("空集合") == EXIT_OK
-    assert capsys.readouterr().out == REFUSAL_SENTENCE + "\n"
+    assert capsys.readouterr().out == "The documents do not contain the answer.\n"
     assert query_embeds(corpus.fake)
     assert chats(corpus.fake) == []
+
+
+def test_empty_collection_refusal_follows_zh(tmp_path, capsys):
+    set_language("zh")
+    corpus = Corpus(tmp_path)
+    corpus.seed([])
+    assert corpus.ask("空集合") == EXIT_OK
+    assert capsys.readouterr().out == "資料中找不到答案。\n"
 
 
 def test_first_chunk_that_does_not_fit_is_not_sent(tmp_path):
     corpus = Corpus(tmp_path, num_ctx=64, num_predict=1)
     corpus.seed([{"text": "BLOCK-SHOULD-NOT-BE-SENT", "distance": 0.1}])
     question = "完整的問題"
-    caught = expect(lambda: corpus.ask(question), EXIT_QUESTION, "不送出半截提示")
+    caught = expect(lambda: corpus.ask(question), EXIT_QUESTION, "partial prompt")
     assert "BLOCK-SHOULD-NOT-BE-SENT" not in caught.message
     bodies = json.dumps(corpus.fake.seen, ensure_ascii=False)
     assert "BLOCK-SHOULD-NOT-BE-SENT" not in bodies
@@ -424,7 +475,7 @@ def test_later_chunk_is_dropped_whole(tmp_path, capsys):
     budget = estimate_tokens(format_excerpt(1, near))
     num_ctx = (
         budget
-        + estimate_tokens(SYSTEM_PROMPT)
+        + estimate_tokens(system_prompt())
         + estimate_tokens(question)
         + 1
         + 128
@@ -483,7 +534,7 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     assert SECRET_QUESTION not in captured.out
     assert SECRET_QUESTION not in captured.err
     assert "頁=" not in captured.err
-    assert PREFIX_WARNING not in captured.err
+    assert _PREFIX_WARNING not in captured.err
     embed = query_embeds(corpus.fake)[0]
     assert embed["input"] == [query_text(SECRET_QUESTION)]
     assert embed["truncate"] is False
@@ -498,7 +549,7 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     assert chat["options"]["num_predict"] == 768
     assert chat["options"]["temperature"] == 0.2
     assert "think" not in chat["options"]
-    assert chat["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert chat["messages"][0] == {"role": "system", "content": system_prompt()}
     assert "images" not in chat["messages"][0]
     assert "images" not in chat["messages"][1]
     assert SECRET_CHUNK in chat["messages"][1]["content"]
@@ -522,7 +573,7 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     logged = log_text(corpus.config)
     assert SECRET_CHUNK not in logged
     assert SECRET_QUESTION not in logged
-    assert "結束碼 0" in logged
+    assert "Exit code 0" in logged
     assert stat.S_IMODE((corpus.config.data_dir / "logs" / "rag.log").stat().st_mode) == 0o600
 
 
@@ -541,7 +592,7 @@ def test_wrong_native_width_is_exit_12(tmp_path):
     corpus = Corpus(tmp_path)
     corpus.fake.vectors = [[0.25, 0.5]]
     name = corpus.seed([{"text": "寬度不對", "distance": 0.1}])
-    expect(lambda: corpus.ask("寬度"), EXIT_MISMATCH, "原生寬度")
+    expect(lambda: corpus.ask("寬度"), EXIT_MISMATCH, "native width")
     assert corpus.collection(name).queries == []
     assert chats(corpus.fake) == []
 
@@ -575,9 +626,17 @@ def test_non_qwen_model_keeps_the_prefix_and_warns(tmp_path, capsys):
     )
     assert corpus.ask("其他") == EXIT_OK
     err = capsys.readouterr().err
-    assert PREFIX_WARNING in err
+    assert _PREFIX_WARNING in err
     assert "其他" not in err
     assert query_embeds(corpus.fake)[0]["input"] == [query_text("其他")]
+
+
+def test_non_qwen_prefix_warning_follows_zh(tmp_path, capsys):
+    set_language("zh")
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": "其他模型", "distance": 0.1}], model="lab-embed:tiny")
+    assert corpus.ask("其他") == EXIT_OK
+    assert "查詢前綴是為 Qwen3-Embedding 寫的，這個模型可能不適用。" in capsys.readouterr().err
 
 
 def test_metadata_mismatch_is_exit_12_without_ollama(tmp_path):
@@ -603,14 +662,14 @@ def test_model_refusal_is_success_and_json_marks_it(tmp_path, capsys):
     corpus = Corpus(tmp_path)
     corpus.fake.chat_message = {
         "role": "assistant",
-        "content": f"\n{REFUSAL_SENTENCE}\n",
+        "content": f"\n{refusal_sentence()}\n",
         "thinking": "",
     }
     corpus.seed([{"text": "證據不足", "distance": 0.2, "page": 2}])
     assert corpus.ask("證據", as_json=True) == EXIT_OK
     payload = json.loads(capsys.readouterr().out)
     assert payload["refused"] is True
-    assert payload["answer"] == REFUSAL_SENTENCE
+    assert payload["answer"] == refusal_sentence()
     assert payload["model"] == NINE_B_MODEL
     assert payload["sources"][0]["page"] == 2
     assert payload["sources"][0]["chunk_id"] == chunk_id_for(DOC, 0)
@@ -624,7 +683,7 @@ def test_thinking_only_is_exit_1_and_is_not_the_answer(tmp_path, capsys):
     corpus = Corpus(tmp_path)
     corpus.fake.chat_message = {"role": "assistant", "content": "", "thinking": "THOUGHT-SECRET"}
     corpus.seed([{"text": "正文", "distance": 0.1}])
-    caught = expect(lambda: corpus.ask("思考"), EXIT_UNCLASSIFIED, "再試一次")
+    caught = expect(lambda: corpus.ask("思考"), EXIT_UNCLASSIFIED, "Try again")
     assert "THOUGHT-SECRET" not in caught.message
     assert capsys.readouterr().out == ""
     assert corpus.fake.loaded == []
@@ -698,7 +757,8 @@ def test_cli_json_show_chunks_and_model_flag(monkeypatch, tmp_path):
     assert SECRET_CHUNK not in err
     assert SECRET_QUESTION not in out
     assert SECRET_QUESTION not in err
-    assert "頁=5" in err
+    assert "page=5" in err
+    assert "頁=" not in err
     assert chats(corpus.fake)[0]["model"] == FOUR_B_MODEL
     assert chats(corpus.fake)[0]["think"] is False
 

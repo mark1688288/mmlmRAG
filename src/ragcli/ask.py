@@ -36,6 +36,7 @@ from ragcli.errors import (
     EXIT_USAGE,
     RagError,
 )
+from ragcli.i18n import t
 from ragcli.models_lock import ollama_lock
 from ragcli.ollama import (
     KEEP_ALIVE_DONE,
@@ -46,12 +47,12 @@ from ragcli.ollama import (
     valid_model_name,
 )
 from ragcli.prompt import (
-    REFUSAL_SENTENCE,
-    SYSTEM_PROMPT,
     Excerpt,
     format_excerpt,
     format_user_message,
     is_refusal,
+    refusal_sentence,
+    system_prompt,
 )
 from ragcli.store.chroma import ChromaIndex, QueryHit
 from ragcli.store.sqlite import Run, SqliteStore
@@ -62,7 +63,6 @@ QUERY_INSTRUCTION = (
     "Given a web search query, retrieve relevant passages that answer the query"
 )
 SAFETY_TOKENS = 128
-PREFIX_WARNING = "查詢前綴是為 Qwen3-Embedding 寫的，這個模型可能不適用。"
 
 _KNOWN_NATIVE = {
     "qwen3-embedding:0.6b": 1024,
@@ -97,21 +97,21 @@ def query_text(question: str) -> str:
     There is no space between ``Query:`` and the question.
     """
     if not isinstance(question, str) or question == "":
-        raise RagError(EXIT_USAGE, "缺少問題。")
+        raise RagError(EXIT_USAGE, t("ask.question_missing"))
     return f"Instruct: {QUERY_INSTRUCTION}\nQuery:{question}"
 
 
 def document_embed_text(text: str) -> str:
     """Return chunk text unchanged. Documents do not take the query prefix."""
     if not isinstance(text, str):
-        raise RagError(EXIT_UNCLASSIFIED, "區塊文字必須是字串。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.chunk_text_type"))
     return text
 
 
 def require_question_limit(question: str, limit: int) -> None:
     """Reject a question over ``limit`` estimated tokens. Do not shorten it."""
     if estimate_tokens(question) > limit:
-        raise RagError(EXIT_QUESTION, f"問題超過 {limit} 個估算 token，不截斷問題。")
+        raise RagError(EXIT_QUESTION, t("ask.question_too_long", limit=limit))
 
 
 def retrieval_budget(
@@ -141,7 +141,7 @@ def pack_excerpts(excerpts: Sequence[Excerpt], budget: int) -> list[Excerpt]:
     first excerpt, raise exit 9 and do not build a partial prompt.
     """
     if isinstance(budget, bool) or not isinstance(budget, int):
-        raise RagError(EXIT_UNCLASSIFIED, "包裝預算不是整數。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.budget_type"))
     ordered = sorted(excerpts, key=lambda item: item.distance)
     packed: list[Excerpt] = []
     used = 0
@@ -149,7 +149,7 @@ def pack_excerpts(excerpts: Sequence[Excerpt], budget: int) -> list[Excerpt]:
         cost = estimate_tokens(format_excerpt(len(packed) + 1, item))
         if used + cost > budget:
             if not packed:
-                raise RagError(EXIT_QUESTION, "連一個區塊都放不進上下文，不送出半截提示。")
+                raise RagError(EXIT_QUESTION, t("ask.excerpt_unfit"))
             break
         packed.append(item)
         used += cost
@@ -175,7 +175,7 @@ def run_ask(
     """Ask one question. Returns a process exit code. Does not embed the corpus."""
     cleaned = _clean_question(question)
     if model is not None and not valid_model_name(model):
-        raise RagError(EXIT_USAGE, "模型名稱不符合允許的格式。")
+        raise RagError(EXIT_USAGE, t("model.name_invalid"))
     limit = _resolve_k(config, k)
     _require_disk(config, free_bytes)
     with _session(config, clock, client_factory=client_factory) as (store, index, outcome):
@@ -214,10 +214,10 @@ def _execute(
     available: int | None,
 ) -> None:
     if store.has_unfinished_chunks():
-        raise RagError(EXIT_MISMATCH, "仍有未完成嵌入的區塊，請先執行 rag ingest --resume。")
+        raise RagError(EXIT_MISMATCH, t("ask.unfinished_chunks"))
     active = store.get_active()
     if active is None:
-        raise RagError(EXIT_NO_COLLECTION, "尚未有作用中集合。")
+        raise RagError(EXIT_NO_COLLECTION, t("ask.no_active_collection"))
     require_question_limit(question, config.max_question_tokens)
     info = index.describe(active.collection)
     if (
@@ -225,10 +225,10 @@ def _execute(
         or info.dimensions != active.dimensions
         or info.embed_num_ctx != active.embed_num_ctx
     ):
-        raise RagError(EXIT_MISMATCH, "作用中集合與 metadata 不一致。")
-    logger.info("查詢集合 %s", active.collection)
+        raise RagError(EXIT_MISMATCH, t("ask.metadata_mismatch"))
+    logger.info("%s", t("log.query_collection", name=active.collection))
     if not active.embed_model.startswith("qwen3-embedding"):
-        print(PREFIX_WARNING, file=sys.stderr)
+        print(t("ask.prefix_warning"), file=sys.stderr)
     ollama = client if client is not None else OllamaClient(config.ollama_base_url)
     with ollama_lock(config.data_dir, timeout=lock_timeout):
         vector = _embed_query(
@@ -240,7 +240,7 @@ def _execute(
         )
         native = _expected_native(config, active.embed_model)
         if native is not None and len(vector) != native:
-            raise RagError(EXIT_MISMATCH, "嵌入回傳的寬度不是這個模型的原生寬度。")
+            raise RagError(EXIT_MISMATCH, t("ask.native_width"))
         hits = index.query(
             vector,
             model=active.embed_model,
@@ -253,9 +253,9 @@ def _execute(
             for hit in ordered:
                 print(_hit_line(hit), file=sys.stderr)
         if not ordered or ordered[0].distance > config.max_cosine_distance:
-            logger.info("沒有足夠接近的命中，拒絕回答。")
+            logger.info("%s", t("log.no_close_hit"))
             _emit(
-                REFUSAL_SENTENCE,
+                refusal_sentence(),
                 refused=True,
                 model=None,
                 sources=[],
@@ -263,9 +263,10 @@ def _execute(
             )
             outcome.refused_count = 1
             return
+        prompt = system_prompt()
         budget = retrieval_budget(
             num_ctx=config.generate_num_ctx,
-            system=SYSTEM_PROMPT,
+            system=prompt,
             question=question,
             num_predict=config.num_predict,
         )
@@ -275,14 +276,15 @@ def _execute(
             ollama,
             outcome,
             format_user_message(question, packed),
+            system=prompt,
             preferred=config.generate_model if model is None else model,
             allow_fallback=allow_fallback,
             available=available,
         )
     refused = is_refusal(content)
-    answer = REFUSAL_SENTENCE if refused else content
+    answer = refusal_sentence() if refused else content
     if refused:
-        logger.info("模型拒絕回答。")
+        logger.info("%s", t("log.model_refused"))
         outcome.refused_count = 1
     outcome.chunk_count = len(packed)
     _emit(answer, refused=refused, model=outcome.model_name, sources=packed, as_json=as_json)
@@ -300,7 +302,7 @@ def _embed_query(
     try:
         vectors = client.embed(model, [text], num_ctx=num_ctx, keep_alive=KEEP_ALIVE_DONE)
         if len(vectors) != 1:
-            raise RagError(EXIT_UNCLASSIFIED, "Ollama 嵌入結果數量不正確。")
+            raise RagError(EXIT_UNCLASSIFIED, t("ask.embed_count"))
         vector = vectors[0]
     except RagError as exc:
         body_error = exc
@@ -312,7 +314,7 @@ def _embed_query(
     finally:
         _release_if_loaded(client, model, body_error, outcome)
     if vector is None:
-        raise RagError(EXIT_UNCLASSIFIED, "Ollama 嵌入結果數量不正確。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.embed_count"))
     return vector
 
 
@@ -322,6 +324,7 @@ def _generate(
     outcome: _Outcome,
     user: str,
     *,
+    system: str,
     preferred: str,
     allow_fallback: bool,
     available: int | None,
@@ -342,14 +345,14 @@ def _generate(
         allow_fallback=allow_fallback,
     )
     outcome.model_name = chosen
-    logger.info("生成模型 %s", chosen)
+    logger.info("%s", t("log.generator", name=chosen))
     result = None
     body_error: BaseException | None = None
     try:
         result = client.chat(
             chosen,
             (
-                ChatMessage("system", SYSTEM_PROMPT),
+                ChatMessage("system", system),
                 ChatMessage("user", user),
             ),
             num_ctx=config.generate_num_ctx,
@@ -367,7 +370,7 @@ def _generate(
     finally:
         _release_if_loaded(client, chosen, body_error, outcome)
     if result is None or result.thinking_only or result.content.strip() == "":
-        raise RagError(EXIT_UNCLASSIFIED, "生成結果是空的，請再試一次。")
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.empty_generation"))
     return result.content
 
 
@@ -387,12 +390,12 @@ def _release_if_loaded(
     names = [item.name for item in loaded]
     if model not in names:
         if names and body_error is None:
-            raise RagError(EXIT_RESOURCES, "卸載後仍有其他模型。")
+            raise RagError(EXIT_RESOURCES, t("ask.models_still_loaded"))
         return
     try:
         client.release_stage(model)
     except RagError as exc:
-        logger.error("卸載 %s 失敗。", model)
+        logger.error("%s", t("log.unload_failed", model=model))
         _note_ollama(outcome, exc)
         if body_error is None:
             raise
@@ -415,10 +418,15 @@ def _excerpt(hit: QueryHit) -> Excerpt:
 
 
 def _hit_line(hit: QueryHit) -> str:
-    page = f" 頁={hit.page_start}" if hit.page_start >= 1 else ""
-    return (
-        f"chunk_id={hit.chunk_id} filename={hit.filename}{page} "
-        f"distance={hit.distance:.6f} kind={hit.kind}"
+    distance = f"{hit.distance:.6f}"
+    page = t("status.hit.page", page=hit.page_start) if hit.page_start >= 1 else ""
+    return t(
+        "status.hit",
+        chunk_id=hit.chunk_id,
+        filename=hit.filename,
+        page=page,
+        distance=distance,
+        kind=hit.kind,
     )
 
 
@@ -462,17 +470,17 @@ def _expected_native(config: Config, model: str) -> int | None:
 
 def _clean_question(question: str) -> str:
     if not isinstance(question, str):
-        raise RagError(EXIT_USAGE, "缺少問題。")
+        raise RagError(EXIT_USAGE, t("ask.question_missing"))
     text = question.strip()
     if text == "":
-        raise RagError(EXIT_USAGE, "缺少問題。")
+        raise RagError(EXIT_USAGE, t("ask.question_missing"))
     return text
 
 
 def _resolve_k(config: Config, k: int | None) -> int:
     value = config.k if k is None else k
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 8:
-        raise RagError(EXIT_USAGE, "--k 必須是 1 到 8 的整數。")
+        raise RagError(EXIT_USAGE, t("ask.k_range"))
     return value
 
 
@@ -482,15 +490,15 @@ def _require_disk(config: Config, free_bytes: Callable[[], int] | None) -> None:
         try:
             free = shutil.disk_usage(probe).free
         except OSError as exc:
-            raise RagError(EXIT_DISK, "讀不到磁碟剩餘空間。") from exc
+            raise RagError(EXIT_DISK, t("disk.free_unreadable")) from exc
     else:
         free = free_bytes()
     if isinstance(free, bool) or not isinstance(free, int) or free < 0:
-        raise RagError(EXIT_DISK, "讀不到磁碟剩餘空間。")
+        raise RagError(EXIT_DISK, t("disk.free_unreadable"))
     if free < config.min_free_bytes:
         raise RagError(
             EXIT_DISK,
-            f"磁碟剩餘 {free} 位元組，少於 {config.min_free_bytes}。",
+            t("disk.free_below", free=free, minimum=config.min_free_bytes),
         )
 
 
@@ -531,7 +539,7 @@ def _session(
                 if outcome.ask_latency_ms is None:
                     elapsed = int((time.monotonic() - started) * 1000)
                     outcome.ask_latency_ms = max(0, elapsed)
-                logger.info("結束碼 %s", outcome.code)
+                logger.info("%s", t("log.exit_code", code=outcome.code))
                 store.finish_run(
                     run_id,
                     finished_at=_now(clock),
