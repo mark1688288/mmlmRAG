@@ -69,8 +69,89 @@ def console_main() -> None:
     sys.exit(main())
 
 
+def _format_argument_error(err: argparse.ArgumentError) -> str:
+    """Translate a known CPython 3.13 argparse message, then name the argument.
+
+    Comparison is against the English msgid. Catalog text from
+    ``ArgumentTypeError`` and any other sentence passes through once.
+    ``invalid choice`` splits on the last `` (choose from `` marker.
+    """
+    message = err.message
+    if message == "expected one argument":
+        message = t("usage.expected_one_argument")
+    elif (
+        message.startswith("invalid choice: ")
+        and " (choose from " in message
+        and message.endswith(")")
+    ):
+        head, _marker, tail = message.rpartition(" (choose from ")
+        value = head[len("invalid choice: ") :]
+        choices = tail[:-1]
+        message = t("usage.invalid_choice", value=value, choices=choices)
+    elif message.startswith("unrecognized arguments: "):
+        message = t(
+            "usage.unrecognized_arguments",
+            args=message[len("unrecognized arguments: ") :],
+        )
+    elif message.startswith("the following arguments are required: "):
+        message = t(
+            "usage.arguments_required",
+            names=message[len("the following arguments are required: ") :],
+        )
+    if err.argument_name is None:
+        return message
+    return t("usage.argument_error", name=err.argument_name, message=message)
+
+
+class _CatalogHelpFormatter(argparse.HelpFormatter):
+    def _format_usage(self, usage, actions, groups, prefix):
+        if prefix is None:
+            prefix = t("help.usage_prefix")
+        return super()._format_usage(usage, actions, groups, prefix)
+
+
+class _CatalogArgumentParser(argparse.ArgumentParser):
+    def __init__(
+        self,
+        *args,
+        formatter_class: type[argparse.HelpFormatter] = _CatalogHelpFormatter,
+        exit_on_error: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            *args,
+            formatter_class=formatter_class,
+            exit_on_error=exit_on_error,
+            **kwargs,
+        )
+        self._positionals.title = t("help.positional_arguments")
+        self._optionals.title = t("help.options")
+        for action in self._actions:
+            if "--help" in action.option_strings:
+                action.help = t("help.show_help")
+
+    def parse_known_args(self, args=None, namespace=None):
+        try:
+            return super().parse_known_args(args, namespace)
+        except argparse.ArgumentError as err:
+            self._exit_with_usage(_format_argument_error(err))
+
+    def parse_args(self, args=None, namespace=None):
+        try:
+            return super().parse_args(args, namespace)
+        except argparse.ArgumentError as err:
+            self._exit_with_usage(_format_argument_error(err))
+
+    def error(self, message: str) -> None:
+        self._exit_with_usage(message)
+
+    def _exit_with_usage(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(2, t("usage.argparse_error", prog=self.prog, message=message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _CatalogArgumentParser(
         prog="rag",
         description=t("help.description"),
         allow_abbrev=False,

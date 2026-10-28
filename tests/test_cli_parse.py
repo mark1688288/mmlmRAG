@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
 import io
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from ragcli.cli import SUPPORTED_SUFFIXES, _peek_option, _prepare_language, main
+from ragcli.cli import (
+    SUPPORTED_SUFFIXES,
+    _format_argument_error,
+    _peek_option,
+    _prepare_language,
+    main,
+)
 from ragcli.config import load_config, peek_ui_language
 from ragcli.errors import (
     EXIT_DISK,
@@ -44,6 +52,17 @@ ZH_FILE = "第一版要檔案路徑，不接受資料夾。"
 EN_LANG_INVALID = "Invalid language {value} for {source}. Use en or zh."
 EN_CONFIG_MISSING = "Missing value for --config."
 ZH_CONFIG_MISSING = "缺少 --config 的值。"
+EN_USAGE_PREFIX = "usage: "
+ZH_USAGE_PREFIX = "用法："
+EN_POSITIONALS = "positional arguments:"
+ZH_POSITIONALS = "位置參數:"
+EN_OPTIONS = "options:"
+ZH_OPTIONS = "選項:"
+EN_SHOW_HELP = "show this help message and exit"
+ZH_SHOW_HELP = "顯示說明並結束"
+_COMMAND_CHOICES = (
+    "'ingest', 'ask', 'reembed', 'use', 'delete', 'status', 'models', 'config'"
+)
 
 
 def invoke(monkeypatch, argv, *, cwd=None, stdin=""):
@@ -747,7 +766,14 @@ def test_default_help_is_english(monkeypatch, tmp_path):
     assert code == EXIT_OK
     assert err == ""
     text = flat(out)
-    assert "usage:" in out
+    assert out.startswith(EN_USAGE_PREFIX)
+    assert EN_POSITIONALS in out
+    assert EN_OPTIONS in out
+    assert EN_SHOW_HELP in out
+    assert ZH_USAGE_PREFIX not in out
+    assert ZH_POSITIONALS not in out
+    assert ZH_OPTIONS not in out
+    assert ZH_SHOW_HELP not in out
     assert EN_LANG_HELP in text
     assert ZH_LANG_HELP not in text
     assert EN_DESCRIPTION in text
@@ -763,7 +789,14 @@ def test_lang_zh_help_is_traditional_chinese(monkeypatch, tmp_path):
     assert code == EXIT_OK
     assert err == ""
     text = flat(out)
-    assert "usage:" in out
+    assert out.startswith(ZH_USAGE_PREFIX)
+    assert ZH_POSITIONALS in out
+    assert ZH_OPTIONS in out
+    assert ZH_SHOW_HELP in out
+    assert EN_USAGE_PREFIX not in out
+    assert EN_POSITIONALS not in out
+    assert EN_OPTIONS not in out
+    assert EN_SHOW_HELP not in out
     assert ZH_LANG_HELP in text
     assert EN_LANG_HELP not in text
     assert ZH_DESCRIPTION in text
@@ -877,7 +910,8 @@ def test_lang_flag_without_a_value_does_not_print_help(monkeypatch, tmp_path, ar
     blob = flat(out + err)
     assert EN_DESCRIPTION not in blob
     assert ZH_DESCRIPTION not in blob
-    assert "usage:" not in blob
+    assert EN_USAGE_PREFIX not in blob
+    assert ZH_USAGE_PREFIX not in blob
     assert ZH_LANG_HELP not in blob
 
 
@@ -916,7 +950,8 @@ def test_config_flag_without_a_value_does_not_print_help(monkeypatch, tmp_path, 
     blob = flat(out + err)
     assert EN_DESCRIPTION not in blob
     assert ZH_DESCRIPTION not in blob
-    assert "usage:" not in blob
+    assert EN_USAGE_PREFIX not in blob
+    assert ZH_USAGE_PREFIX not in blob
 
 
 def test_last_lang_on_config_show_wins(monkeypatch, tmp_path):
@@ -941,7 +976,14 @@ def test_last_lang_flag_wins_on_nested_help(monkeypatch, tmp_path):
     text = flat(out)
     assert ZH_LANG_HELP in text
     assert EN_LANG_HELP not in text
-    assert "usage:" in out
+    assert out.startswith("用法：rag models pull")
+    assert "用法：用法：" not in out
+    assert ZH_OPTIONS in out
+    assert ZH_SHOW_HELP in out
+    assert EN_USAGE_PREFIX not in out
+    assert EN_POSITIONALS not in out
+    assert EN_OPTIONS not in out
+    assert EN_SHOW_HELP not in out
 
 
 def test_lang_after_double_dash_is_not_a_flag(monkeypatch, tmp_path):
@@ -978,7 +1020,14 @@ def test_parent_rag_toml_is_seen_before_help(monkeypatch, tmp_path):
     assert EN_LANG_HELP not in flat(out)
     assert ZH_DESCRIPTION in flat(out)
     assert EN_DESCRIPTION not in flat(out)
-    assert "usage:" in out
+    assert out.startswith(ZH_USAGE_PREFIX)
+    assert ZH_POSITIONALS in out
+    assert ZH_OPTIONS in out
+    assert ZH_SHOW_HELP in out
+    assert EN_USAGE_PREFIX not in out
+    assert EN_POSITIONALS not in out
+    assert EN_OPTIONS not in out
+    assert EN_SHOW_HELP not in out
     code, out, err = invoke(monkeypatch, ["config", "show"], cwd=child)
     assert code == EXIT_OK, err
     values = shown(out)
@@ -1239,6 +1288,12 @@ def test_help_text_is_translated_inside_parser_builders():
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             by_function[node.name] = _message_ids(node)
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef):
+                    by_function[f"{node.name}.{child.name}"] = _message_ids(child)
+                else:
+                    module_ids.extend(_message_ids(child))
         else:
             module_ids.extend(_message_ids(node))
     assert module_ids == []
@@ -1247,16 +1302,27 @@ def test_help_text_is_translated_inside_parser_builders():
         for name, ids in by_function.items()
         if any(message_id.startswith("help.") for message_id in ids)
     }
-    assert help_owners == {"build_parser", "_add_globals"}
+    assert help_owners == {
+        "build_parser",
+        "_add_globals",
+        "_CatalogHelpFormatter._format_usage",
+        "_CatalogArgumentParser.__init__",
+    }
     help_calls = [
         message_id
-        for ids in by_function.values()
-        for message_id in ids
+        for name in ("build_parser", "_add_globals")
+        for message_id in by_function[name]
         if message_id.startswith("help.")
     ]
     assert len(help_calls) == 46
     assert help_calls.count("help.metavar.action") == 2
     assert "help.lang" in by_function["_add_globals"]
+    assert by_function["_CatalogHelpFormatter._format_usage"] == ["help.usage_prefix"]
+    assert by_function["_CatalogArgumentParser.__init__"] == [
+        "help.positional_arguments",
+        "help.options",
+        "help.show_help",
+    ]
 
 
 def test_ui_language_log_uses_percent_s():
@@ -1281,3 +1347,268 @@ def test_ui_language_log_uses_percent_s():
     assert isinstance(rendered, ast.Call)
     assert isinstance(rendered.func, ast.Name) and rendered.func.id == "t"
     assert rendered.args[0].value == "log.ui_language"
+
+
+def _argument_error(message: str, name: str | None = None) -> argparse.ArgumentError:
+    err = argparse.ArgumentError(None, message)
+    err.argument_name = name
+    return err
+
+
+def _error_line(err: str) -> str:
+    return err.splitlines()[-1]
+
+
+_EN_INVALID_COMMAND = (
+    "rag: error: argument command: invalid choice: 'nosuch' "
+    f"(choose from {_COMMAND_CHOICES})"
+)
+_ZH_INVALID_COMMAND = (
+    "rag：錯誤：參數 指令：選擇無效：'nosuch'（可選 " f"{_COMMAND_CHOICES}）"
+)
+
+
+def test_format_argument_error_translates_the_four_english_prefixes():
+    assert _format_argument_error(
+        _argument_error("expected one argument", "--k")
+    ) == "argument --k: expected one argument"
+    assert _format_argument_error(
+        _argument_error(
+            "invalid choice: 'nosuch' (choose from 'ingest', 'ask')",
+            "command",
+        )
+    ) == "argument command: invalid choice: 'nosuch' (choose from 'ingest', 'ask')"
+    assert (
+        _format_argument_error(_argument_error("unrecognized arguments: --nope"))
+        == "unrecognized arguments: --nope"
+    )
+    assert (
+        _format_argument_error(
+            _argument_error("the following arguments are required: command")
+        )
+        == "the following arguments are required: command"
+    )
+    assert _format_argument_error(
+        _argument_error("Must be a positive integer", "--max-pages")
+    ) == "argument --max-pages: Must be a positive integer"
+    assert _format_argument_error(
+        _argument_error("expected one argument extra", "--k")
+    ) == "argument --k: expected one argument extra"
+    assert _format_argument_error(
+        _argument_error("invalid choice: 'nosuch' without the marker")
+    ) == "invalid choice: 'nosuch' without the marker"
+    braced = "unrecognized arguments: --{keep}"
+    assert _format_argument_error(_argument_error(braced)) == braced
+    assert _format_argument_error(
+        _argument_error("keep {braces}", "--k")
+    ) == "argument --k: keep {braces}"
+
+
+def test_format_argument_error_splits_on_the_last_choose_from_marker():
+    set_language("zh")
+    message = "invalid choice: 'a (choose from b' (choose from 'x', 'y')"
+    assert _format_argument_error(_argument_error(message, "command")) == (
+        "參數 command：選擇無效：'a (choose from b'（可選 'x', 'y'）"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "line", "usage_prefix", "absent"),
+    [
+        (["nosuch"], _EN_INVALID_COMMAND, "usage: rag ", None),
+        (
+            ["ingest", "--nope"],
+            "rag: error: unrecognized arguments: --nope",
+            "usage: rag ",
+            "usage: rag ingest",
+        ),
+        (
+            ["ask", "--k", "9"],
+            "rag ask: error: argument --k: --k must be an integer from 1 to 8",
+            "usage: rag ask ",
+            None,
+        ),
+        (
+            ["ask", "--k"],
+            "rag ask: error: argument --k: expected one argument",
+            "usage: rag ask ",
+            None,
+        ),
+        (
+            ["ingest", "--max-pages", "0"],
+            "rag ingest: error: argument --max-pages: Must be a positive integer",
+            "usage: rag ingest ",
+            None,
+        ),
+        (
+            ["--lock-timeout", "-1", "status"],
+            "rag: error: argument --lock-timeout: Must be zero or a positive integer",
+            "usage: rag ",
+            None,
+        ),
+        (
+            ["models"],
+            "rag models: error: the following arguments are required: action",
+            "usage: rag models ",
+            None,
+        ),
+        (
+            [],
+            "rag: error: the following arguments are required: command",
+            "usage: rag ",
+            None,
+        ),
+        (
+            ["--verbose"],
+            "rag: error: the following arguments are required: command",
+            "usage: rag ",
+            None,
+        ),
+    ],
+)
+def test_english_argparse_errors_keep_cpython_text(
+    monkeypatch, tmp_path, argv, line, usage_prefix, absent
+):
+    code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.startswith(usage_prefix)
+    assert _error_line(err) == line
+    assert ZH_USAGE_PREFIX not in err
+    if absent is not None:
+        assert absent not in err
+
+
+@pytest.mark.parametrize(
+    ("argv", "line", "usage_prefix", "absent"),
+    [
+        (["--lang", "zh", "nosuch"], _ZH_INVALID_COMMAND, "用法：rag ", None),
+        (
+            ["--lang", "zh", "ingest", "--nope"],
+            "rag：錯誤：無法識別的參數：--nope",
+            "用法：rag ",
+            "用法：rag ingest",
+        ),
+        (
+            ["--lang", "zh", "ask", "--k"],
+            "rag ask：錯誤：參數 --k：需要一個參數",
+            "用法：rag ask ",
+            None,
+        ),
+        (
+            ["--lang", "zh"],
+            "rag：錯誤：以下參數必須提供：指令",
+            "用法：rag ",
+            None,
+        ),
+        (
+            ["--lang", "zh", "models"],
+            "rag models：錯誤：以下參數必須提供：動作",
+            "用法：rag models ",
+            None,
+        ),
+        (
+            ["--lang", "zh", "ask", "--k", "9"],
+            "rag ask：錯誤：參數 --k：--k 必須是 1 到 8 的整數",
+            "用法：rag ask ",
+            None,
+        ),
+        (
+            ["--lang", "zh", "ingest", "--{keep}"],
+            "rag：錯誤：無法識別的參數：--{keep}",
+            "用法：rag ",
+            "用法：rag ingest",
+        ),
+    ],
+)
+def test_chinese_argparse_errors_follow_lang(
+    monkeypatch, tmp_path, argv, line, usage_prefix, absent
+):
+    code, out, err = invoke(monkeypatch, argv, cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.startswith(usage_prefix)
+    assert _error_line(err) == line
+    assert EN_USAGE_PREFIX not in err
+    if absent is not None:
+        assert absent not in err
+
+
+def test_ui_language_translates_argparse_errors(monkeypatch, tmp_path):
+    write_config(tmp_path, '[ui]\nlanguage = "zh"\n')
+    code, out, err = invoke(monkeypatch, ["models"], cwd=tmp_path)
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.startswith("用法：rag models ")
+    assert _error_line(err) == "rag models：錯誤：以下參數必須提供：動作"
+    assert EN_USAGE_PREFIX not in err
+
+
+def test_zh_subcommand_usage_has_one_prefix(monkeypatch, tmp_path):
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "zh", "ingest", "--help"], cwd=tmp_path
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    assert out.startswith("用法：rag ingest")
+    assert "用法：用法：" not in out
+    assert "usage: rag ingest" not in out
+    assert ZH_POSITIONALS in out
+    assert ZH_OPTIONS in out
+    assert ZH_SHOW_HELP in out
+
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "zh", "models", "pull", "--help"], cwd=tmp_path
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    assert out.startswith("用法：rag models pull")
+    assert "用法：用法：" not in out
+    assert EN_USAGE_PREFIX not in out
+    assert ZH_POSITIONALS not in out
+    assert ZH_OPTIONS in out
+    assert ZH_SHOW_HELP in out
+
+
+def test_zh_missing_config_value_has_no_usage_chrome(monkeypatch, tmp_path):
+    code, out, err = invoke(
+        monkeypatch, ["--lang", "zh", "--config"], cwd=tmp_path
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert err.strip() == ZH_CONFIG_MISSING
+    blob = flat(out + err)
+    assert EN_USAGE_PREFIX not in blob
+    assert ZH_USAGE_PREFIX not in blob
+    assert EN_DESCRIPTION not in blob
+    assert ZH_DESCRIPTION not in blob
+
+
+def test_process_locale_does_not_choose_argparse_chrome(tmp_path):
+    def run(lang: str, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        for key in ("LANG", "LC_ALL", "LC_MESSAGES", "LANGUAGE"):
+            env.pop(key, None)
+        env["LANG"] = lang
+        return subprocess.run(
+            [sys.executable, "-m", "ragcli.cli", *argv],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    english = run("zh_TW.UTF-8", ["--lang", "en", "nosuch"])
+    assert english.returncode == EXIT_USAGE
+    assert english.stdout == ""
+    assert _error_line(english.stderr) == _EN_INVALID_COMMAND
+    assert "選擇無效" not in english.stderr
+    assert "錯誤：" not in english.stderr
+
+    chinese = run("C", ["--lang", "zh", "nosuch"])
+    assert chinese.returncode == EXIT_USAGE
+    assert chinese.stdout == ""
+    assert _error_line(chinese.stderr) == _ZH_INVALID_COMMAND
+    assert "invalid choice:" not in chinese.stderr
+    assert "error:" not in chinese.stderr

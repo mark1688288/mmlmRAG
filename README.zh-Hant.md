@@ -94,7 +94,7 @@ rag config show
 
 `rag ingest` 接受 `--force`、`--resume`、`--no-ocr`、`--no-vision`、`--no-embed`、`--strict`、`--max-pages` 同 `--max-bytes`。`rag ask` 接受 `--k`（1 到 8）、`--model`、`--no-fallback`、`--show-chunks` 同 `--json`。
 
-`--lang` 選擇介面語言，`en` 或 `zh`。`en` 是英文，也是預設。`zh` 是繁體中文。這個旗標覆蓋 `rag.toml` 的 `[ui] language`。兩者都沒有時，介面是英文。ragcli 不讀 `LANG`、`LC_ALL`，也不讀 macOS 偏好語言。值必須恰好是 `en` 或 `zh`。`[ocr] languages` 選擇 Vision 辨識語言，不跟介面語言連動。
+`--lang` 選擇介面語言，`en` 或 `zh`。`en` 是英文，也是預設。`zh` 是繁體中文。這個旗標覆蓋 `rag.toml` 的 `[ui] language`。兩者都沒有時，介面是英文。ragcli 不讀 `LANG`、`LC_ALL`，也不讀 macOS 偏好語言。值必須恰好是 `en` 或 `zh`。`[ocr] languages` 選擇 Vision 辨識語言，不跟介面語言連動。用法列、區段標題、說明動作那一句，以及 argparse 的錯誤外框，跟 `--lang` 與 `ui.language`。
 
 ```toml
 [ui]

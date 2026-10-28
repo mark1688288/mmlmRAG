@@ -94,7 +94,7 @@ rag config show
 
 `rag ingest` accepts `--force`, `--resume`, `--no-ocr`, `--no-vision`, `--no-embed`, `--strict`, `--max-pages`, and `--max-bytes`. `rag ask` accepts `--k` (1 to 8), `--model`, `--no-fallback`, `--show-chunks`, and `--json`.
 
-`--lang` chooses the interface language, `en` or `zh`. `en` is English and is the default. `zh` is Traditional Chinese. The flag overrides `[ui] language` in `rag.toml`. When both are absent, the interface is English. ragcli does not read `LANG`, `LC_ALL`, or the macOS preferred language. The value must be exactly `en` or `zh`. `[ocr] languages` chooses Vision recognition and does not follow the interface language.
+`--lang` chooses the interface language, `en` or `zh`. `en` is English and is the default. `zh` is Traditional Chinese. The flag overrides `[ui] language` in `rag.toml`. When both are absent, the interface is English. ragcli does not read `LANG`, `LC_ALL`, or the macOS preferred language. The value must be exactly `en` or `zh`. `[ocr] languages` chooses Vision recognition and does not follow the interface language. The usage line, section headings, the help-action sentence, and argparse error text follow `--lang` and `ui.language`.
 
 ```toml
 [ui]
