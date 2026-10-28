@@ -59,7 +59,7 @@ SQLite 來自 Python 標準程式庫，屬於公有領域。
 brew install mark1688288/mmlmrag/mmlmrag
 ```
 
-這會從 [homebrew-mmlmrag](https://github.com/mark1688288/homebrew-mmlmrag) tap 安裝 `rag` 命令。公式依賴 macOS 同 `python@3.13`，並釘選 `v0.1.0` 標籤的封存檔。它的 Python 資源是該標籤的 Apple Silicon wheel。第一次執行 `rag` 會建立 `~/.mmlmrag`，包括一個私有環境，以及在尚未存在時建立 `rag.toml`。工作目錄或其父目錄若有 `rag.toml`，會改用那一份。否則 `rag` 使用 `~/.mmlmrag/rag.toml`。
+這會從 [homebrew-mmlmrag](https://github.com/mark1688288/homebrew-mmlmrag) tap 安裝 `rag` 命令。公式依賴 macOS 同 `python@3.13`，並釘選 `v0.1.1` 標籤的封存檔。它的 Python 資源是該標籤的 Apple Silicon wheel。第一次執行 `rag` 會建立 `~/.mmlmrag`，包括一個私有環境，以及在尚未存在時建立 `rag.toml`。工作目錄或其父目錄若有 `rag.toml`，會改用那一份。否則 `rag` 使用 `~/.mmlmrag/rag.toml`。
 
 先安裝 Ollama，再拉取預設模型。
 
