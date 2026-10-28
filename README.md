@@ -3,7 +3,7 @@
 
 mmlmRAG (`ragcli`) is a local mixed-language retrieval-augmented generation command-line tool. The `rag` command reads documents on the local device and uses local models through [Ollama](https://ollama.com) to embed them and answer questions from that corpus. Text and vectors stay in a SQLite database and a Chroma index under `data/`.
 
-[![Version](https://img.shields.io/badge/version-0.1.0-2F6F8F)](https://github.com/mark1688288/mmlmRAG)
+[![Version](https://img.shields.io/badge/version-0.1.1-2F6F8F)](https://github.com/mark1688288/mmlmRAG)
 [![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#prerequisites)
 [![Ollama](https://img.shields.io/badge/Ollama-local-000000?logo=ollama&logoColor=white)](https://ollama.com)
