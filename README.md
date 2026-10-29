@@ -164,7 +164,7 @@ Based on the provided excerpts, here is the short-form summary regarding Madam W
 **Professional Roles and Involvement:**
 *   She was a long-serving District Councillor in Tai Po until 26 September 2026 when she resigned [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
 *   She was invited to be a consultant to the Management Committee (MC) of WF Court on 17 November 2021, accepting an unpaid, voluntary, and advisory role without decision-making authority [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
-*   She assisted the Incorporated Owners (IO) in collecting proxy votes for owners' meetings [來源：IC-Report-Volume1_en.pdf p.83 #65f286d27428:000118].
+*   She assisted the Incorporated Owners (IO) in collecting proxy votes for owners’ meetings [來源：IC-Report-Volume1_en.pdf p.83 #65f286d27428:000118].
 *   She held 29 proxy votes (373 undivided shares) for the 11 December 2021 meeting and 24 proxy votes (318 undivided shares) at the 6 September 2024 meeting [來源：IC-Report-Volume2_en.pdf p.353 #39cb23b4ce4c:000398].
 *   She personally held the fifth-highest number of proxy votes at both meetings mentioned above [來源：IC-Report-Volume2_en.pdf p.357 #39cb23b4ce4c:000402].
 
