@@ -140,7 +140,7 @@ language = "zh"
 
 #### 長文件
 
-source: www[.]gov.hk/en/residents/government/policy/government_reports/reports_index.htm - 就大埔宏福苑火災成立的獨立委員會報告 (第一冊 及 第二冊)
+source: www[.]gov.hk/tc/residents/government/policy/government_reports/reports_index.htm - 就大埔宏福苑火災成立的獨立委員會報告 (第一冊 及 第二冊)
 
 **IC-Report-Volume1_tc.pdf** · 
 發佈日期 29-10-2026 · 檔案大小 26.9 MB · 總頁數 477

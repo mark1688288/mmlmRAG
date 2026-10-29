@@ -142,47 +142,46 @@ source: hb.gov.hk/eng/policy/housing/policy/light_public_housing/pamphlet.html -
 
 source: www[.]gov.hk/en/residents/government/policy/government_reports/reports_index.htm - Report of the Independent Committee in relation to the fire at Wang Fuk Court in Tai Po (Volume 1 & Volume 2)
 
-**IC-Report-Volume1_tc.pdf** · 
-Published 29-10-2026 · 26.9 MB · 477 pages
+**IC-Report-Volume1_en.pdf** · 
+Published 29-10-2026 · 24.2 MB · 505 pages
 
-`b485d41d886320c9131003b13981142d73c0d2324a5c574a38c17b85af6e3a49`
+`65f286d27428afd50e884fb5d0746030cc3cd4afa6fa69e0989eefdf696d7668`
 
-**IC-Report-Volume2_tc.pdf** · 
-Published 29-10-2026 · 45.9 MB · 584 pages
+**IC-Report-Volume2_en.pdf** · 
+Published 29-10-2026 · 62 MB · 703 pages
 
-`5c2d253b347ed43115b0a654d16b136b39a41d7dde27ee38c6c64d0e3f4abc9c`
+`39cb23b4ce4c9694e8cfb76b8996588df91fd4c986c878597343facb7dee234a`
 
-<img src="imgs/mmlmRAG_LiveDemo-long-documents.jpeg" alt="Long documents demo" width="720">
+<img src="imgs/mmlmRAG_LiveDemo-long-documents_en.jpeg" alt="Long documents demo" width="720">
 
 ```bash
 INFO Query collection emb-qwen3-embedding-0.6b-d1024
 INFO Unloaded qwen3-embedding:0.6b
-WARNING Available memory is 9113288704 bytes, below the 9663676416 bytes qwen3.5:9b needs, switching to qwen3.5:4b.
-INFO Generator model qwen3.5:4b
-INFO Unloaded qwen3.5:4b
-根據提供的摘錄，以下是關於黃碧嬌的關係圖：
+INFO Generator model qwen3.5:9b
+INFO Unloaded qwen3.5:9b
+Based on the provided excerpts, here is the short-form summary regarding Madam Wong Pik Kiu:
 
-*   **黃碧嬌** (大埔區議員)
-    *   角色：宏福苑管委會顧問 (2021 年 11 月獲邀，無薪、義務及諮詢性質) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   行為：協助業主立案法團收集授權票 (授權票) [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
-    *   指控 1：從已身故的業主取得授權票 (傳媒報導指稱，警方跟進) [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
-    *   指控 2：代繳訴訟費欠款 (涉及冼城焯先生事件) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   指控 3：出席重要會議時由外間人士陪同，人脈包括建造業界人士 [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   指控 4：帶領義工團隊逐戶敲門收集授權票 (江祥發指稱) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   回應：承認協助收集授權票，否認非法或不當行為 [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
-*   **宏福苑** (業主立案法團/管委會)
-    *   事件：工程招標、火災發生後事務討論 [來源: IC-Report-Volume2_tc.pdf p.330 #{chunk_id}]
-*   **大埔區議員**
-    *   關聯人物：梅少峰 (曾與黃碧嬌一同出席多個業主會議) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-*   **其他人士**
-    *   冼城焯 (管委會前主席，涉及訴訟費事件) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   冼善卿 (管委會前司庫，作供提及黃碧嬌代繳欠款) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   馮堯 (管委會前委員，作供提及黃碧嬌出席會議由外間人士陪同) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   江祥發 (指稱黃碧嬌帶領義工團隊收集授權票) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-    *   鄧國權 (前任管委會主席，透過電話邀請黃碧嬌擔任顧問) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
-*   **機構**
-    *   委員會：曾要求黃碧嬌回應指控，認為無足夠依據轉為調查委員會研訊以傳召她作供 [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
-    *   警方：已按照既定程序跟進關於從身故業主取得授權票的指控 [來源: IC-Report-Volume1_tc.pdf p.7
+**Professional Roles and Involvement:**
+*   She was a long-serving District Councillor in Tai Po until 26 September 2026 when she resigned [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
+*   She was invited to be a consultant to the Management Committee (MC) of WF Court on 17 November 2021, accepting an unpaid, voluntary, and advisory role without decision-making authority [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
+*   She assisted the Incorporated Owners (IO) in collecting proxy votes for owners' meetings [來源：IC-Report-Volume1_en.pdf p.83 #65f286d27428:000118].
+*   She held 29 proxy votes (373 undivided shares) for the 11 December 2021 meeting and 24 proxy votes (318 undivided shares) at the 6 September 2024 meeting [來源：IC-Report-Volume2_en.pdf p.353 #39cb23b4ce4c:000398].
+*   She personally held the fifth-highest number of proxy votes at both meetings mentioned above [來源：IC-Report-Volume2_en.pdf p.357 #39cb23b4ce4c:000402].
+
+**Interactions with Other Relevant Individuals:**
+*   She was invited by telephone by the former Chairman, Mr Tang Kwok Kuen, to be a consultant [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
+*   She provided a written statement to the Committee on 8 April 2026 [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
+*   Former Treasurer Madam Sin Sin Hing mentioned an incident in the 2010s where Madam Wong Pik Kiu allegedly intervened to settle a debt regarding litigation costs [來源：IC-Report-Volume2_en.pdf p.353 #39cb23b4ce4c:000398].
+*   Former MC member Mr Danny Fung testified that she attended important meetings accompanied by outside individuals and had extensive connections in the construction sector [來源：IC-Report-Volume2_en.pdf p.353 #39cb23b4ce4c:000398].
+*   The Committee invited her to provide an account of her involvement due to public concern [來源：IC-Report-Volume2_en.pdf p.351 #39cb23b4ce4c:000396].
+
+**Investigation by Law Enforcement:**
+*   The report states that if there was any secret wrongdoing, it would have to be investigated by the Law Enforcement Agencies [來源：IC-Report-Volume2_en.pdf p.357 #39cb23b4ce4c:000402].
+*   It further notes that the Police are said to have started its investigation on allegations regarding proxy votes from owners who had already passed away, according to established practice [來源：IC-Report-Volume2_en.pdf p.357 #39cb23b4ce4c:000403].
+
+**WF Court of Inquiry Summoning:**
+*   The Committee does not consider there is sufficient basis for converting the Inquiry into a Court of Inquiry (COI) for the purpose of summoning Madam Wong Pik Kiu to testify [來源：IC-Report-Volume1_en.pdf p.83 #65f286d27428:000118].
+*   The Committee sent requests inviting her to respond to allegations, but did not summon her to testify in the Inquiry [來源：IC-Report-Volume1_en.pdf p.83 #65f286d27428:000118].
 INFO Exit code 0
 ```
 
