@@ -138,6 +138,47 @@ source: hb.gov.hk/eng/policy/housing/policy/light_public_housing/pamphlet.html -
 
 <img src="imgs/mmlmRAG_LiveDemo-ocr-pdf.jpeg" alt="Ingest a PDF with OCR, then ask" width="720">
 
+#### Long documents
+
+source: www.gov.hk/en/residents/government/policy/government_reports/reports_index.htm - Report of the Independent Committee in relation to the fire at Wang Fuk Court in Tai Po (Volume 1 & Volume 2)
+
+IC-Report-Volume1_tc.pdf, published date: 29-10-2026, file size on disk: 26.9 MB, total pages: 477, SHA-256: b485d41d886320c9131003b13981142d73c0d2324a5c574a38c17b85af6e3a49
+<br />
+IC-Report-Volume2_tc.pdf, published date: 29-10-2026, file size on disk: 45.9 MB, total pages: 584, SHA-256: 5c2d253b347ed43115b0a654d16b136b39a41d7dde27ee38c6c64d0e3f4abc9c
+
+<img src="imgs/mmlmRAG_LiveDemo-long-documents.jpeg" alt="Long documents demo" width="720">
+
+```bash
+INFO Query collection emb-qwen3-embedding-0.6b-d1024
+INFO Unloaded qwen3-embedding:0.6b
+WARNING Available memory is 9113288704 bytes, below the 9663676416 bytes qwen3.5:9b needs, switching to qwen3.5:4b.
+INFO Generator model qwen3.5:4b
+INFO Unloaded qwen3.5:4b
+根據提供的摘錄，以下是關於黃碧嬌的關係圖：
+
+*   **黃碧嬌** (大埔區議員)
+    *   角色：宏福苑管委會顧問 (2021 年 11 月獲邀，無薪、義務及諮詢性質) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   行為：協助業主立案法團收集授權票 (授權票) [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
+    *   指控 1：從已身故的業主取得授權票 (傳媒報導指稱，警方跟進) [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
+    *   指控 2：代繳訴訟費欠款 (涉及冼城焯先生事件) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   指控 3：出席重要會議時由外間人士陪同，人脈包括建造業界人士 [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   指控 4：帶領義工團隊逐戶敲門收集授權票 (江祥發指稱) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   回應：承認協助收集授權票，否認非法或不當行為 [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
+*   **宏福苑** (業主立案法團/管委會)
+    *   事件：工程招標、火災發生後事務討論 [來源: IC-Report-Volume2_tc.pdf p.330 #{chunk_id}]
+*   **大埔區議員**
+    *   關聯人物：梅少峰 (曾與黃碧嬌一同出席多個業主會議) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+*   **其他人士**
+    *   冼城焯 (管委會前主席，涉及訴訟費事件) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   冼善卿 (管委會前司庫，作供提及黃碧嬌代繳欠款) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   馮堯 (管委會前委員，作供提及黃碧嬌出席會議由外間人士陪同) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   江祥發 (指稱黃碧嬌帶領義工團隊收集授權票) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+    *   鄧國權 (前任管委會主席，透過電話邀請黃碧嬌擔任顧問) [來源: IC-Report-Volume2_tc.pdf p.331 #{chunk_id}]
+*   **機構**
+    *   委員會：曾要求黃碧嬌回應指控，認為無足夠依據轉為調查委員會研訊以傳召她作供 [來源: IC-Report-Volume1_tc.pdf p.72 #{chunk_id}]
+    *   警方：已按照既定程序跟進關於從身故業主取得授權票的指控 [來源: IC-Report-Volume1_tc.pdf p.7
+INFO Exit code 0
+```
 
 #### OCR Image to text
 
