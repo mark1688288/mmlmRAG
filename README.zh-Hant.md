@@ -3,7 +3,7 @@
 
 mmlmRAG（`ragcli`）是本機混合語言檢索增強生成命令列工具。`rag` 命令讀取這部裝置上的文件，經 [Ollama](https://ollama.com) 的本機模型做嵌入，並依該語料回答問題。正文同向量留在 `data/` 下的 SQLite 資料庫同 Chroma 索引。
 
-[![Version](https://img.shields.io/badge/version-0.1.1-2F6F8F)](https://github.com/mark1688288/mmlmRAG)
+[![Version](https://img.shields.io/badge/version-0.1.2-2F6F8F)](https://github.com/mark1688288/mmlmRAG)
 [![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#前置需求)
 [![Ollama](https://img.shields.io/badge/Ollama-local-000000?logo=ollama&logoColor=white)](https://ollama.com)
