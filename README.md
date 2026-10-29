@@ -59,7 +59,7 @@ Accepted ingest files are `.pdf`, `.docx`, `.pptx`, `.txt`, `.md`, `.png`, `.jpg
 brew install mark1688288/mmlmrag/mmlmrag
 ```
 
-This installs the `rag` command from the [homebrew-mmlmrag](https://github.com/mark1688288/homebrew-mmlmrag) tap. The formula depends on macOS and `python@3.13`, and it pins the `v0.1.1` tag archive. Its Python resources are the Apple Silicon wheels for that tag. The first `rag` command creates `~/.mmlmrag`, including a private environment and, when absent, `rag.toml`. A `rag.toml` in the working directory or a parent is used instead. Otherwise `rag` uses `~/.mmlmrag/rag.toml`.
+This installs the `rag` command from the [homebrew-mmlmrag](https://github.com/mark1688288/homebrew-mmlmrag) tap. The formula depends on macOS and `python@3.13`, and it pins the `v0.1.2` tag archive. Its Python resources are the Apple Silicon wheels for that tag. The first `rag` command creates `~/.mmlmrag`, including a private environment and, when absent, `rag.toml`. A `rag.toml` in the working directory or a parent is used instead. Otherwise `rag` uses `~/.mmlmrag/rag.toml`.
 
 Install Ollama, then pull the default models.
 

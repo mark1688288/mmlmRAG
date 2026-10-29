@@ -6,8 +6,8 @@ class Mmlmrag < Formula
 
   desc "Local mixed-language RAG command-line tool"
   homepage "https://github.com/mark1688288/mmlmRAG"
-  url "https://github.com/mark1688288/mmlmRAG/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "424cc739f02d582eb708899995d022fa1009b886b70d3280ebb76d9b32f94463"
+  url "https://github.com/mark1688288/mmlmRAG/archive/refs/tags/v0.1.2.tar.gz"
+  sha256 "7a4cf6066037bbbfa8e8e4a4759e479562a444d868c5292f50764038a81361aa"
   license "AGPL-3.0-only"
 
   depends_on :macos
