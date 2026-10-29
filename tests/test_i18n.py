@@ -74,6 +74,20 @@ def test_language_switch_messages():
     )
 
 
+def test_prompt_excerpt_headers_match_the_literals():
+    assert t("prompt.excerpt.source") == "source="
+    assert t("prompt.excerpt.page") == " page="
+    assert t("prompt.excerpt.kind") == " kind="
+    assert t("prompt.user.question") == "Question:\n"
+    assert t("prompt.user.excerpts") == "\n\nExcerpts:\n"
+    set_language("zh")
+    assert t("prompt.excerpt.source") == "來源="
+    assert t("prompt.excerpt.page") == " 頁="
+    assert t("prompt.excerpt.kind") == " 種類="
+    assert t("prompt.user.question") == "問題：\n"
+    assert t("prompt.user.excerpts") == "\n\n摘錄：\n"
+
+
 def test_cli_catalog_keeps_the_original_sentences():
     assert t("help.description") == (
         "Local mixed-language RAG. Documents stay on this Mac."

@@ -1,10 +1,10 @@
 """System prompt and the user message for one question.
 
-The prompt body stays Traditional Chinese. Only the refusal sentence follows
-the interface language. ``think`` is not a setting, and this module does not
-call Ollama or read the corpus. A missing page is omitted rather than printed
-as -1. Citation brackets are instructions to the model; the program does not
-parse them back out of the answer.
+The system prompt body stays Traditional Chinese. Only ``ask.refusal`` and
+the five excerpt headers follow the interface language. ``think`` is not a
+setting, and this module does not call Ollama or read the corpus. A missing
+page is omitted rather than printed as -1. Citation brackets are instructions
+to the model; the program does not parse them back out of the answer.
 """
 
 from __future__ import annotations
@@ -65,11 +65,18 @@ def is_refusal(text: str) -> bool:
 
 
 def format_excerpt(index: int, excerpt: Excerpt) -> str:
-    """One numbered block. Page -1 (and any page below 1) omits ``頁=``."""
-    page = f" 頁={excerpt.page}" if excerpt.page >= 1 else ""
+    """One numbered block. A page below 1 omits the page label."""
+    page = (
+        t("prompt.excerpt.page") + str(excerpt.page) if excerpt.page >= 1 else ""
+    )
     header = (
-        f"[{index}] 來源={excerpt.filename}{page} "
-        f"chunk={excerpt.chunk_id} 種類={excerpt.kind}"
+        f"[{index}] "
+        + t("prompt.excerpt.source")
+        + excerpt.filename
+        + page
+        + f" chunk={excerpt.chunk_id}"
+        + t("prompt.excerpt.kind")
+        + excerpt.kind
     )
     return f"{header}\n{excerpt.text}"
 
@@ -80,4 +87,9 @@ def format_user_message(question: str, excerpts: Sequence[Excerpt]) -> str:
         format_excerpt(index, excerpt)
         for index, excerpt in enumerate(excerpts, start=1)
     ]
-    return f"問題：\n{question}\n\n摘錄：\n" + "\n".join(blocks)
+    return (
+        t("prompt.user.question")
+        + question
+        + t("prompt.user.excerpts")
+        + "\n".join(blocks)
+    )

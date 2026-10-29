@@ -303,14 +303,55 @@ def test_user_message_omits_a_missing_page_and_keeps_the_system_template():
     paged = Excerpt("c2", "b.txt", 4, "figure", "圖", 0.3)
     hidden = format_user_message("問題本身", [missing])
     shown = format_user_message("問題本身", [paged])
-    assert "頁=" not in hidden
-    assert "來源=a.txt chunk=c1 種類=ocr" in hidden
-    assert hidden.startswith("問題：\n問題本身\n\n摘錄：\n[1] ")
-    assert "頁=4" in shown
-    prompt = system_prompt()
-    assert "[來源: {filename} p.{page} #{chunk_id}]" in prompt
-    assert "{filename}" in prompt
-    assert refusal_sentence() in prompt
+    assert hidden == (
+        "Question:\n"
+        "問題本身\n"
+        "\n"
+        "Excerpts:\n"
+        "[1] source=a.txt chunk=c1 kind=ocr\n"
+        "正文"
+    )
+    assert shown == (
+        "Question:\n"
+        "問題本身\n"
+        "\n"
+        "Excerpts:\n"
+        "[1] source=b.txt page=4 chunk=c2 kind=figure\n"
+        "圖"
+    )
+    for message in (hidden, shown):
+        assert "頁=" not in message
+        assert "來源=" not in message
+        assert "種類=" not in message
+        assert "問題：" not in message
+        assert "摘錄：" not in message
+    assert "page=" not in hidden
+    set_language("zh")
+    assert format_user_message("問題本身", [missing]) == (
+        "問題：\n"
+        "問題本身\n"
+        "\n"
+        "摘錄：\n"
+        "[1] 來源=a.txt chunk=c1 種類=ocr\n"
+        "正文"
+    )
+    assert format_user_message("問題本身", [paged]) == (
+        "問題：\n"
+        "問題本身\n"
+        "\n"
+        "摘錄：\n"
+        "[1] 來源=b.txt 頁=4 chunk=c2 種類=figure\n"
+        "圖"
+    )
+    for language in ("en", "zh"):
+        set_language(language)
+        prompt = system_prompt()
+        assert "[來源: {filename} p.{page} #{chunk_id}]" in prompt
+        assert "{filename}" in prompt
+        assert refusal_sentence() in prompt
+        assert "只可以根據下方「摘錄」回答問題" in prompt
+        assert "Excerpts" not in prompt
+        assert "Question:" not in prompt
 
 
 def test_refusal_sentence_follows_the_catalog_and_the_prompt():
@@ -415,6 +456,8 @@ def test_distance_gate_refuses_without_a_generator(tmp_path, capsys):
     assert SECRET_CHUNK not in out.err
     assert SECRET_QUESTION not in out.err
     assert "頁=" not in out.err
+    for token in ("source=", "來源=", "Question:", "Excerpts:", "問題：", "摘錄：", "種類="):
+        assert token not in out.err
     assert "chunk_id=" in out.err
     assert "distance=0.900000" in out.err
     assert chats(corpus.fake) == []
@@ -492,7 +535,9 @@ def test_later_chunk_is_dropped_whole(tmp_path, capsys):
     user = chats(corpus.fake)[0]["messages"][1]["content"]
     assert near.text in user
     assert far.text not in user
-    assert "頁=3" in user
+    assert "page=3" in user
+    assert "頁=" not in user
+    assert "Excerpts:" in user
     assert user.index(near.text) < user.find("FAR") if "FAR" in user else True
     assert out.out == "七日內可以退款。\n"
     query = corpus._chroma.collections[next(iter(corpus._chroma.collections))].queries[0]
@@ -534,6 +579,8 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     assert SECRET_QUESTION not in captured.out
     assert SECRET_QUESTION not in captured.err
     assert "頁=" not in captured.err
+    for token in ("source=", "來源=", "Question:", "Excerpts:", "問題：", "摘錄：", "種類="):
+        assert token not in captured.err
     assert _PREFIX_WARNING not in captured.err
     embed = query_embeds(corpus.fake)[0]
     assert embed["input"] == [query_text(SECRET_QUESTION)]
@@ -552,8 +599,18 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     assert chat["messages"][0] == {"role": "system", "content": system_prompt()}
     assert "images" not in chat["messages"][0]
     assert "images" not in chat["messages"][1]
-    assert SECRET_CHUNK in chat["messages"][1]["content"]
-    assert "頁=" not in chat["messages"][1]["content"]
+    content = chat["messages"][1]["content"]
+    assert SECRET_CHUNK in content
+    assert "Question:\n" in content
+    assert "\n\nExcerpts:\n" in content
+    assert "source=" in content
+    assert "chunk=" in content
+    assert "kind=" in content
+    assert "page=" not in content
+    assert "頁=" not in content
+    assert "來源=" not in content
+    assert "問題：" not in content
+    assert "摘錄：" not in content
     sent = corpus.collection(name).queries[0]["query_embeddings"]
     assert sent == [[3.0, 0.0, 0.0, 4.0]]
     assert ":" not in name
@@ -575,6 +632,24 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     assert SECRET_QUESTION not in logged
     assert "Exit code 0" in logged
     assert stat.S_IMODE((corpus.config.data_dir / "logs" / "rag.log").stat().st_mode) == 0o600
+
+
+def test_chat_user_message_headers_follow_zh(tmp_path):
+    set_language("zh")
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": SECRET_CHUNK, "distance": 0.25, "page": 4}])
+    assert corpus.ask(SECRET_QUESTION) == EXIT_OK
+    content = chats(corpus.fake)[0]["messages"][1]["content"]
+    assert "來源=" in content
+    assert " 頁=" in content
+    assert " 種類=" in content
+    assert content.startswith("問題：\n")
+    assert "\n\n摘錄：\n" in content
+    assert "chunk=" in content
+    assert "Question:" not in content
+    assert "Excerpts:" not in content
+    assert "source=" not in content
+    assert " page=" not in content
 
 
 def test_shorter_width_uses_one_truncate_normalize(tmp_path):
@@ -759,6 +834,8 @@ def test_cli_json_show_chunks_and_model_flag(monkeypatch, tmp_path):
     assert SECRET_QUESTION not in err
     assert "page=5" in err
     assert "頁=" not in err
+    for token in ("source=", "來源=", "Question:", "Excerpts:", "問題：", "摘錄：", "種類="):
+        assert token not in err
     assert chats(corpus.fake)[0]["model"] == FOUR_B_MODEL
     assert chats(corpus.fake)[0]["think"] is False
 

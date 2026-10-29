@@ -406,4 +406,9 @@ MESSAGES = {
     "usage.unrecognized_arguments": "unrecognized arguments: {args}",
     "usage.expected_one_argument": "expected one argument",
     "usage.arguments_required": "the following arguments are required: {names}",
+    "prompt.excerpt.source": "source=",
+    "prompt.excerpt.page": " page=",
+    "prompt.excerpt.kind": " kind=",
+    "prompt.user.question": "Question:\n",
+    "prompt.user.excerpts": "\n\nExcerpts:\n",
 }

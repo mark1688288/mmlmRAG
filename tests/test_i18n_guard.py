@@ -27,20 +27,10 @@ _INTERNAL_ERROR_FILES = frozenset(
     }
 )
 
-# Fixed text that is not an interface sentence. Chunk labels are stored
-# and sent to the model in both languages. ``描述失敗。`` is an
+# Fixed text that is not an interface sentence. ``描述失敗。`` is an
 # ``images.error`` value, same column as the pixel-overflow sentence.
 # ``標題`` matches a Chinese Word heading style. The two code points are
 # the CJK Unified Ideographs block in the token formula.
-_PROMPT_HEADERS = frozenset(
-    {
-        " 頁=",
-        "] 來源=",
-        " 種類=",
-        "問題：\n",
-        "\n\n摘錄：\n",
-    }
-)
 _ROUTE_CHUNK_TEXT = frozenset(
     {
         "圖像 OCR",
@@ -274,9 +264,7 @@ class _Guard(ast.NodeVisitor):
         if self.path == "src/ragcli/i18n/zh_Hant.py" or id(node) in self._docstrings:
             return True
         assigned = self._module_assign_name(node)
-        if self.path == "src/ragcli/prompt.py" and (
-            assigned == "_SYSTEM_PROMPT" or text in _PROMPT_HEADERS
-        ):
+        if self.path == "src/ragcli/prompt.py" and assigned == "_SYSTEM_PROMPT":
             return True
         if self.path == "src/ragcli/images/caption.py" and assigned in {
             "SYSTEM_PROMPT",
@@ -570,7 +558,9 @@ def test_guard_han_allowlist_keeps_non_interface_text():
         )
         == []
     )
-    assert _scan('HEADER = " 頁="\n', "src/ragcli/prompt.py") == []
+    header = _scan('HEADER = " 頁="\n', "src/ragcli/prompt.py")
+    assert header
+    assert "Han literal outside the allowlist:" in header[0].detail
     assert (
         _scan(
             'SYSTEM_PROMPT = "你是圖像描述器。"\nUSER_PROMPT = "描述這張圖。"\n',
@@ -602,6 +592,31 @@ def test_guard_han_allowlist_keeps_non_interface_text():
         )
         == []
     )
+
+
+def test_guard_rejects_excerpt_header_literals():
+    literals = (
+        "來源=",
+        " 頁=",
+        " 種類=",
+        "問題：\n",
+        "\n\n摘錄：\n",
+    )
+    for text in literals:
+        found = _scan(
+            f"def format_excerpt():\n    label = {text!r}\n",
+            "src/ragcli/prompt.py",
+        )
+        assert found, repr(text)
+        assert found[0].path == "src/ragcli/prompt.py"
+        assert "Han literal outside the allowlist:" in found[0].detail
+        assert (
+            _scan(
+                f"MESSAGES = {{'prompt.header': {text!r}}}\n",
+                "src/ragcli/i18n/zh_Hant.py",
+            )
+            == []
+        )
 
 
 def test_guard_rejects_han_outside_the_allowlist():

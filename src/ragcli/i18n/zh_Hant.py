@@ -361,4 +361,9 @@ MESSAGES = {
     "usage.unrecognized_arguments": "無法識別的參數：{args}",
     "usage.expected_one_argument": "需要一個參數",
     "usage.arguments_required": "以下參數必須提供：{names}",
+    "prompt.excerpt.source": "來源=",
+    "prompt.excerpt.page": " 頁=",
+    "prompt.excerpt.kind": " 種類=",
+    "prompt.user.question": "問題：\n",
+    "prompt.user.excerpts": "\n\n摘錄：\n",
 }
