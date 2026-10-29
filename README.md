@@ -142,11 +142,15 @@ source: hb.gov.hk/eng/policy/housing/policy/light_public_housing/pamphlet.html -
 
 source: www[.]gov.hk/en/residents/government/policy/government_reports/reports_index.htm - Report of the Independent Committee in relation to the fire at Wang Fuk Court in Tai Po (Volume 1 & Volume 2)
 
-```bash
-IC-Report-Volume1_tc.pdf, published date: 29-10-2026, file size on disk: 26.9 MB, total pages: 477, SHA-256: b485d41d886320c9131003b13981142d73c0d2324a5c574a38c17b85af6e3a49
+**IC-Report-Volume1_tc.pdf**
+Published 29-10-2026 · 26.9 MB · 477 pages
 
-IC-Report-Volume2_tc.pdf, published date: 29-10-2026, file size on disk: 45.9 MB, total pages: 584, SHA-256: 5c2d253b347ed43115b0a654d16b136b39a41d7dde27ee38c6c64d0e3f4abc9c
-```
+`b485d41d886320c9131003b13981142d73c0d2324a5c574a38c17b85af6e3a49`
+
+**IC-Report-Volume2_tc.pdf**
+Published 29-10-2026 · 45.9 MB · 584 pages
+
+`5c2d253b347ed43115b0a654d16b136b39a41d7dde27ee38c6c64d0e3f4abc9c`
 
 <img src="imgs/mmlmRAG_LiveDemo-long-documents.jpeg" alt="Long documents demo" width="720">
 
