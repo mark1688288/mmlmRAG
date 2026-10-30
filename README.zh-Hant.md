@@ -222,6 +222,45 @@ INFO Unloaded qwen3.5:9b
 INFO Exit code 0
 ```
 
+```bash
+INFO Query collection emb-qwen3-embedding-0.6b-d1024
+INFO Unloaded qwen3-embedding:0.6b
+WARNING Available memory is 6930939904 bytes, below the 9663676416 bytes qwen3.5:9b needs, switching to qwen3.5:4b.
+INFO Generator model qwen3.5:4b
+INFO Unloaded qwen3.5:4b
+根據提供的摘錄，黃碧嬌、宏業與鴻毅三者之間**沒有直接關係**被記錄在文件中。
+
+*   **黃碧嬌**是時任大埔區議員，曾協助業主立案法團收集授權票（俗稱授權票），並被指參與了宏福苑工程招標的不當活動，但她與「宏業」或「鴻毅」這兩家公司沒有直接的業務或關聯關係被提及。
+*   **宏業**（Hong Yee）是投標者之一，在回標分析報告中得分最高，並涉及紀律處分紀錄及沙田翠湖花園的圍標案件。文件中未提及黃碧嬌與宏業有直接關係，也未提及鴻毅與宏業有直接關係。
+*   **鴻毅**（Hong Yi）是顧問公司，獲聘為註冊檢驗人員進行檢驗工作，並被指與天築國際、郭駿建築師及萬景工程等投標者有關聯。文件中未提及黃碧嬌與鴻毅有直接關係，也未提及宏業與鴻毅有直接關係。
+
+摘錄中僅顯示黃碧嬌與居民/業主立案法團的互動，以及宏業與鴻毅作為不同實體在招標及顧問角色中的獨立參與情況，三者之間無共同點或關聯鏈被描述。
+
+The documents do not contain the answer.
+INFO Exit code 0
+```
+
+```bash
+INFO Query collection emb-qwen3-embedding-0.6b-d1024
+INFO Unloaded qwen3-embedding:0.6b
+WARNING Available memory is 8700379136 bytes, below the 9663676416 bytes qwen3.5:9b needs, switching to qwen3.5:4b.
+INFO Generator model qwen3.5:4b
+INFO Unloaded qwen3.5:4b
+根據摘錄，與發泡膠板有關連的人、公司或機構包括：
+
+*   **供應商一**：由嚴楚基控制的公司（向新南方轉售發泡膠板）。
+*   **武漢漢塑新材料有限公司**（「武漢漢塑」）：向承造工程供應發泡膠板的供應商。
+*   **王志明**：承造工程姚錦輝姪兒，向姚錦輝介紹發泡膠板供應商武漢漢塑。
+*   **宏業**：在 2024 年 9 月與居民討論發泡膠板易燃性，並解釋該物料不會因接觸煙頭而燃燒，但若明火持續燃燒則會燃燒。
+*   **置邦**、**鴻毅**、**管委會**及**市建局**：出席工程會議，對發泡膠板的易燃性提出關注或討論。
+
+[來源: IC-Report-Volume1_tc.pdf p.98 #b485d41d8863:000551]
+[來源: IC-Report-Volume1_tc.pdf p.158 #b485d41d8863:000182]
+[來源: IC-Report-Volume1_tc.pdf p.158 #b485d41d8863:000561]
+[來源: IC-Report-Volume2_tc.pdf p.103 #5c2d253b347e:000132]
+INFO Exit code 0
+```
+
 #### OCR 圖像轉文字
 
 來源：[samples-live/demo.gif](samples-live/demo.gif)
