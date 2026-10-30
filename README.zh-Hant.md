@@ -186,6 +186,42 @@ INFO Unloaded qwen3.5:4b
 INFO Exit code 0
 ```
 
+```bash
+INFO Query collection emb-qwen3-embedding-0.6b-d1024
+INFO Unloaded qwen3-embedding:0.6b
+INFO Generator model qwen3.5:9b
+INFO Unloaded qwen3.5:9b
+根據摘錄，侯華建先生的關係圖如下：
+
+**核心人物：**
+*   **侯華建 (Mr Hau Wa Kin)**：宏業董事兼主要股東 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+
+**宏業內部關係：**
+*   **何建業 (Mr Ho Kin Yip)**：宏業經理（2008 年起）兼董事（至 2026 年 1 月 13 日），負責監督日常運作 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+*   **張燕琴 (Ms Cheung Yin Chin)**：侯華建妻子兼文書人員，經理（2008 年起）兼董事（至 2026 年 1 月 13 日） [來源: IC-Report-Volume1_tc.pdf p.91 #000544]。
+*   **黃忠基 (Mr Wong Chung Kee)**：獲授權簽署人，同時另外受僱於一間專業服務供應商，並借調至房屋署九龍東分區辦事處負責樓宇維修工程 [來源: IC-Report-Volume1_tc.pdf p.91 #000544]。
+*   **譚雋生 (Mr Tam Chun Son)**：宏福苑工程地盤管工 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+*   **張耀榮 (Mr Cheung Yiu Wing)**：宏福苑工程地盤管工 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+*   **張寶忠 (Mr Chong Po Chung)**：宏福苑工程地盤管工 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+*   **梁麗斯 (Madam Leung Lai Sze)**：宏福苑工程地盤文員 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+*   **黃兆泰 (Mr Wong Siu Tai)**：宏福苑工程的地盤安全主任（2024 年 9 月起），受僱於由宏業委聘卓迪國際有限公司 [來源: IC-Report-Volume1_tc.pdf p.91 #000544]。
+*   **黃碧儀 (Madam Wong Pik Yi)**：文員，負責標書 [來源: IC-Report-Volume2_tc.pdf p.443 #000632]。
+*   **葉均雅 (Ms Ip Wan Nga)**：文員，負責擬備報告 [來源: IC-Report-Volume1_tc.pdf p.91 #000544]。
+
+**與外部公司的關聯：**
+*   **萬嘉 (Wong Ka)**：侯華建表示與其僅有業主與租客關係（解釋被指流於空泛） [來源: IC-Report-Volume2_tc.pdf p.304 #000396]。
+*   **民星 (Min Sing)**：董事譚子文先生曾經是侯華建的僱主，後侯華建離職並創立宏業；多年後兩人共同成立利來 [來源: IC-Report-Volume2_tc.pdf p.304 #000396]。
+*   **偉利 (Wai Li)**：梁炳耀先生在 2005 年至 2014 年期間擔任宏業董事，後因關係惡化離開並成立侯華建形容為競爭對手的偉利 [來源: IC-Report-Volume2_tc.pdf p.304 #000396]。
+*   **炬鋒有限公司 (Jufeng)**：李植開先生與蔡文鳴先生曾與侯華建一起擔任該公司的董事兼股東 [來源: IC-Report-Volume2_tc.pdf p.305 #000397]。
+    *   新開明建築工程有限公司：李植開先生是董事兼股東之一，曾與侯華建一起擔任炬鋒的董事兼股東 [來源: IC-Report-Volume2_tc.pdf p.305 #000397]。
+    *   信豪（集團）工程有限公司：蔡文鳴先生是董事兼股東之一，同樣曾與侯華建一起擔任炬鋒的董事兼股東 [來源: IC-Report-Volume2_tc.pdf p.305 #000397]。
+
+**其他相關人員：**
+*   **黃俠然 (Mr Wong Hiu Yin)**：鴻毅的東主 [來源: IC-Report-Volume2_tc.pdf p.5 #000003]。
+*   **吳躍先 (Mr Ng Yiu Sin)**：宏福苑工程的註冊檢驗人員（由鴻毅委聘） [來源: IC-Report-Volume2_tc.pdf p.5 #000003]。
+INFO Exit code 0
+```
+
 #### OCR 圖像轉文字
 
 來源：[samples-live/demo.gif](samples-live/demo.gif)
