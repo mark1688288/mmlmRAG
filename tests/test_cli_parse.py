@@ -174,6 +174,10 @@ def test_ask_help_lists_hybrid_flags(monkeypatch, tmp_path):
     assert "--no-hybrid" in out
     assert "--neighbors" in out
     assert "--no-neighbors" in out
+    assert "--rerank" in out
+    assert "--no-rerank" in out
+    assert "Turn reranking on for this question" in flat(out)
+    assert "Turn reranking off for this question" in flat(out)
     assert "Turn hybrid retrieval on for this question" in flat(out)
     assert "Turn hybrid retrieval off for this question" in flat(out)
     assert "Turn neighboring chunks on for this question" in flat(out)
@@ -290,6 +294,100 @@ def test_hybrid_false_is_shown(monkeypatch, tmp_path):
     assert shown(out)["retrieve.hybrid"] == "false"
 
 
+def test_rerank_flags_cannot_both_be_set(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["ask", "--rerank", "--no-rerank", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "--rerank and --no-rerank cannot both be set." in err
+
+
+def test_rerank_flag_conflict_follows_zh(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "zh", "ask", "--rerank", "--no-rerank", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "不可以同時指定 --rerank 同 --no-rerank。" in err
+    assert "cannot both be set" not in err
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("[retrieve]\nrerank = 1\n", "retrieve.rerank must be a boolean."),
+        ('[retrieve]\nrerank = "yes"\n', "retrieve.rerank must be a boolean."),
+        (
+            "[retrieve]\nrerank_candidates = 14\n",
+            "retrieve.rerank_candidates must be from 15 to 20.",
+        ),
+        (
+            "[retrieve]\nrerank_candidates = 21\n",
+            "retrieve.rerank_candidates must be from 15 to 20.",
+        ),
+        (
+            "[retrieve]\nrerank_num_ctx = 512\n",
+            "retrieve.rerank_num_ctx must be from 1536 to 2048.",
+        ),
+        (
+            "[retrieve]\nrerank_num_ctx = 4096\n",
+            "retrieve.rerank_num_ctx must be from 1536 to 2048.",
+        ),
+        (
+            '[retrieve]\nrerank_model = "bad name"\n',
+            "The model name does not match the allowed format.",
+        ),
+        (
+            '[retrieve]\nrerank_model = ""\n',
+            "retrieve.rerank_model must be a non-empty string.",
+        ),
+    ],
+)
+def test_rerank_settings_reject_bad_values(monkeypatch, tmp_path, body, message):
+    write_config(tmp_path, body)
+    code, _out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert message in err
+
+
+def test_rerank_defaults_and_bounds_are_shown(monkeypatch, tmp_path):
+    write_config(
+        tmp_path,
+        "\n".join(
+            [
+                "[retrieve]",
+                "rerank = true",
+                "rerank_candidates = 15",
+                "rerank_num_ctx = 1536",
+                "",
+            ]
+        ),
+    )
+    code, out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    values = shown(out)
+    assert values["retrieve.rerank"] == "true"
+    assert values["retrieve.rerank_model"] == "qwen3-reranker:0.6b"
+    assert values["retrieve.rerank_candidates"] == "15"
+    assert values["retrieve.rerank_num_ctx"] == "1536"
+
+
 def test_ingest_help_lists_flags(monkeypatch, tmp_path):
     code, out, _err = invoke(monkeypatch, ["ingest", "--help"], cwd=tmp_path)
     assert code == EXIT_OK
@@ -342,6 +440,10 @@ def test_repo_config_show_matches_design(monkeypatch, tmp_path):
         "retrieve.max_question_tokens": "512",
         "retrieve.hybrid": "true",
         "retrieve.neighbors": "true",
+        "retrieve.rerank": "false",
+        "retrieve.rerank_model": "qwen3-reranker:0.6b",
+        "retrieve.rerank_candidates": "16",
+        "retrieve.rerank_num_ctx": "2048",
         "chunk.target_tokens": "480",
         "chunk.max_tokens": "640",
         "chunk.overlap_tokens": "80",
@@ -1440,11 +1542,13 @@ def test_help_text_is_translated_inside_parser_builders():
         for message_id in by_function[name]
         if message_id.startswith("help.")
     ]
-    assert len(help_calls) == 50
+    assert len(help_calls) == 52
     assert help_calls.count("help.ask.hybrid") == 1
     assert help_calls.count("help.ask.no_hybrid") == 1
     assert help_calls.count("help.ask.neighbors") == 1
     assert help_calls.count("help.ask.no_neighbors") == 1
+    assert help_calls.count("help.ask.rerank") == 1
+    assert help_calls.count("help.ask.no_rerank") == 1
     assert help_calls.count("help.metavar.action") == 2
     assert "help.lang" in by_function["_add_globals"]
     assert by_function["_CatalogHelpFormatter._format_usage"] == ["help.usage_prefix"]

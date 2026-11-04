@@ -5,8 +5,10 @@ not. ``Query:`` has no space before the question. Hits whose best cosine
 distance is above the configured gate never load a generator, do not query
 FTS, and do not expand neighboring chunks. When hybrid retrieval is on,
 vector hits and FTS hits are merged with RRF. Same-document chunks at
-ordinal ±1 then follow those direct hits. A chunk that does not fit is
-left out whole, and if the first chunk does not fit the prompt is not sent.
+ordinal ±1 then follow those direct hits. Optional reranking is off unless
+requested. A skip leaves the same direct hits as reranking off. A chunk
+that does not fit is left out whole, and if the first chunk does not fit
+the prompt is not sent.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from ragcli.errors import (
 from ragcli.i18n import t
 from ragcli.models_lock import ollama_lock
 from ragcli.ollama import (
+    KEEP_ALIVE_BATCH,
     KEEP_ALIVE_DONE,
     ChatMessage,
     OllamaClient,
@@ -56,7 +59,20 @@ from ragcli.prompt import (
     refusal_sentence,
     system_prompt,
 )
-from ragcli.retrieve import MergedHit, fts_match_query, rrf_merge
+from ragcli.retrieve import (
+    RERANK_MODEL,
+    RERANK_OVERHEAD,
+    RERANK_PROBE_MARGIN,
+    RERANK_PROBE_PAIRS,
+    RERANK_SYSTEM,
+    RERANK_TOP_LOGPROBS,
+    MergedHit,
+    fts_match_query,
+    rerank_user,
+    rrf_merge,
+    template_accepts_rerank,
+    yes_no_score,
+)
 from ragcli.store.chroma import ChromaIndex, QueryHit
 from ragcli.store.sqlite import Chunk, Run, SqliteStore
 
@@ -169,6 +185,7 @@ def run_ask(
     as_json: bool = False,
     hybrid: bool | None = None,
     neighbors: bool | None = None,
+    rerank: bool | None = None,
     lock_timeout: float | None = None,
     client: OllamaClient | None = None,
     available: int | None = None,
@@ -183,6 +200,7 @@ def run_ask(
     limit = _resolve_k(config, k)
     use_hybrid = _resolve_hybrid(config, hybrid)
     use_neighbors = _resolve_neighbors(config, neighbors)
+    use_rerank = _resolve_rerank(config, rerank)
     _require_disk(config, free_bytes)
     with _session(config, clock, client_factory=client_factory) as (store, index, outcome):
         _execute(
@@ -198,6 +216,7 @@ def run_ask(
             as_json=as_json,
             hybrid=use_hybrid,
             neighbors=use_neighbors,
+            rerank=use_rerank,
             lock_timeout=lock_timeout,
             client=client,
             available=available,
@@ -219,6 +238,7 @@ def _execute(
     as_json: bool,
     hybrid: bool,
     neighbors: bool,
+    rerank: bool,
     lock_timeout: float | None,
     client: OllamaClient | None,
     available: int | None,
@@ -241,6 +261,9 @@ def _execute(
         print(t("ask.prefix_warning"), file=sys.stderr)
     ollama = client if client is not None else OllamaClient(config.ollama_base_url)
     with ollama_lock(config.data_dir, timeout=lock_timeout):
+        width = k
+        if rerank and _rerank_can_score(config, ollama, outcome, available):
+            width = config.rerank_candidates
         vector = _embed_query(
             ollama,
             outcome,
@@ -256,7 +279,7 @@ def _execute(
             model=active.embed_model,
             dimensions=active.dimensions,
             embed_num_ctx=active.embed_num_ctx,
-            n_results=k,
+            n_results=width,
         )
         ordered = sorted(hits, key=lambda hit: hit.distance)
         if not ordered or ordered[0].distance > config.max_cosine_distance:
@@ -272,7 +295,23 @@ def _execute(
             )
             outcome.refused_count = 1
             return
-        selected = _select_hits(store, question, ordered, k=k, hybrid=hybrid)
+        fts_ids = _fts_ids(store, question, width) if hybrid else []
+        if width == config.rerank_candidates and rerank:
+            selected = _apply_rerank(
+                config,
+                store,
+                ollama,
+                outcome,
+                question,
+                ordered,
+                fts_ids,
+                k=k,
+                hybrid=hybrid,
+            )
+        else:
+            selected = _select_hits(
+                store, ordered, fts_ids, limit=k, hybrid=hybrid
+            )
         if neighbors:
             selected = _append_neighbors(store, selected)
         if show_chunks:
@@ -420,27 +459,39 @@ def _note_ollama(outcome: _Outcome, exc: RagError) -> None:
         outcome.ollama_error_count += 1
 
 
+def _fts_ids(store: SqliteStore, question: str, limit: int) -> list[str]:
+    """Ranked full-text ids, or an empty list when the question has no span."""
+    match = fts_match_query(question)
+    if match is None:
+        return []
+    return [chunk_id for chunk_id, _score in store.search_fts(match, limit)]
+
+
 def _select_hits(
     store: SqliteStore,
-    question: str,
     ordered: Sequence[QueryHit],
+    fts_ids: Sequence[str],
     *,
-    k: int,
+    limit: int,
     hybrid: bool,
+    announce: bool = True,
 ) -> list[Excerpt]:
-    """Return direct hits in pack order. A closed gate never reaches here."""
+    """Return direct hits in pack order. A closed gate never reaches here.
+
+    ``ordered`` is nearest-first. ``fts_ids`` is best-bm25-first. ``limit``
+    keeps the prefix of each list before fusion, so a wide retrieval can be
+    reduced to the same hits reranking-off would have produced.
+    """
+    vector_rows = list(ordered[:limit])
     if not hybrid:
-        return [_excerpt(hit) for hit in ordered[:k]]
-    match = fts_match_query(question)
-    fts_ids: list[str] = []
-    if match is not None:
-        fts_ids = [chunk_id for chunk_id, _score in store.search_fts(match, k)]
+        return [_excerpt(hit) for hit in vector_rows]
+    chosen_fts = list(fts_ids[:limit])
     merged = rrf_merge(
-        [(hit.chunk_id, hit.distance) for hit in ordered],
-        fts_ids,
-        k,
+        [(hit.chunk_id, hit.distance) for hit in vector_rows],
+        chosen_fts,
+        limit,
     )
-    by_id = {hit.chunk_id: hit for hit in ordered}
+    by_id = {hit.chunk_id: hit for hit in vector_rows}
     selected: list[Excerpt] = []
     for item in merged:
         hit = by_id.get(item.chunk_id)
@@ -450,16 +501,222 @@ def _select_hits(
         loaded = _fts_excerpt(store, item)
         if loaded is not None:
             selected.append(loaded)
-    logger.info(
-        "%s",
-        t(
-            "log.hybrid",
-            vector_count=len(ordered),
-            fts_count=len(fts_ids),
-            merged_count=len(selected),
-        ),
-    )
+    if announce:
+        logger.info(
+            "%s",
+            t(
+                "log.hybrid",
+                vector_count=len(vector_rows),
+                fts_count=len(chosen_fts),
+                merged_count=len(selected),
+            ),
+        )
     return selected
+
+
+def _rerank_can_score(
+    config: Config,
+    client: OllamaClient,
+    outcome: _Outcome,
+    available: int | None,
+) -> bool:
+    """True only when the wide retrieval is allowed to load the reranker.
+
+    A skip is logged and does not load the model. Connection errors still
+    fail the question. A missing tag, a rejected template, a failed memory
+    gate, or a context that cannot hold one pair all return false.
+    """
+    if (
+        config.max_question_tokens + config.chunk_max_tokens + RERANK_OVERHEAD
+        > config.rerank_num_ctx
+    ):
+        logger.warning("%s", t("log.rerank_skipped"))
+        return False
+    model = config.rerank_model
+    try:
+        installed = client.tags()
+    except RagError as exc:
+        _note_ollama(outcome, exc)
+        raise
+    if model not in installed:
+        logger.warning("%s", t("log.rerank_skipped"))
+        return False
+    try:
+        template = client.show_template(model)
+    except RagError as exc:
+        if exc.code == EXIT_OLLAMA_UNREACHABLE:
+            _note_ollama(outcome, exc)
+            raise
+        logger.warning("%s", t("log.rerank_skipped"))
+        return False
+    if not template_accepts_rerank(template):
+        logger.warning("%s", t("log.rerank_skipped"))
+        return False
+    try:
+        allowed = _rerank_memory_ok(config, model, available)
+    except RagError as exc:
+        _note_ollama(outcome, exc)
+        raise
+    if not allowed:
+        logger.warning("%s", t("log.rerank_skipped"))
+        return False
+    return True
+
+
+def _rerank_memory_ok(config: Config, model: str, available: int | None) -> bool:
+    """The default 0.6B tag skips the gate. Other names use 4B or 9B bytes."""
+    if model == RERANK_MODEL:
+        return True
+    if model == config.generate_fallback_model:
+        need = config.four_b_min_bytes
+    else:
+        need = config.nine_b_min_bytes
+    free = available_bytes() if available is None else available
+    if isinstance(free, bool) or not isinstance(free, int) or free < 0:
+        raise RagError(EXIT_RESOURCES, t("ollama.memory_unavailable"))
+    return free >= need
+
+
+def _apply_rerank(
+    config: Config,
+    store: SqliteStore,
+    client: OllamaClient,
+    outcome: _Outcome,
+    question: str,
+    ordered: Sequence[QueryHit],
+    fts_ids: Sequence[str],
+    *,
+    k: int,
+    hybrid: bool,
+) -> list[Excerpt]:
+    """Score the wide list, or rebuild the rerank-off hits from its prefixes.
+
+    The reranker is unloaded before this returns. A dirty ``ps`` is exit 13.
+    Any other scoring failure keeps the prefix fusion and exit 0.
+    """
+    candidates = _select_hits(
+        store,
+        ordered,
+        fts_ids,
+        limit=config.rerank_candidates,
+        hybrid=hybrid,
+        announce=False,
+    )
+    kept: list[Excerpt] | None = None
+    try:
+        try:
+            kept = _score_candidates(
+                client,
+                config.rerank_model,
+                config.rerank_num_ctx,
+                question,
+                candidates,
+                k,
+            )
+        except RagError as exc:
+            _note_ollama(outcome, exc)
+            kept = None
+        if kept is None:
+            logger.warning("%s", t("log.rerank_blocked"))
+            return _select_hits(store, ordered, fts_ids, limit=k, hybrid=hybrid)
+        if hybrid:
+            logger.info(
+                "%s",
+                t(
+                    "log.hybrid",
+                    vector_count=len(ordered),
+                    fts_count=len(fts_ids),
+                    merged_count=len(candidates),
+                ),
+            )
+        logger.info("%s", t("log.rerank_used", count=len(kept)))
+        return kept
+    finally:
+        _release_reranker(client, config.rerank_model, outcome)
+
+
+def _score_candidates(
+    client: OllamaClient,
+    model: str,
+    num_ctx: int,
+    question: str,
+    candidates: Sequence[Excerpt],
+    k: int,
+) -> list[Excerpt] | None:
+    """Return the top ``k`` excerpts, or ``None`` when any score is missing."""
+    if not _probe_accepts(client, model, num_ctx):
+        return None
+    scored: list[tuple[float, int, Excerpt]] = []
+    for index, excerpt in enumerate(candidates):
+        score = _yes_no(client, model, num_ctx, question, excerpt.text)
+        if score is None:
+            return None
+        scored.append((score, index, excerpt))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in scored[:k]]
+
+
+def _probe_accepts(client: OllamaClient, model: str, num_ctx: int) -> bool:
+    """Four fixed pairs must score, and each relevant side must lead by 0.2."""
+    for query, relevant, irrelevant in RERANK_PROBE_PAIRS:
+        rel = _yes_no(client, model, num_ctx, query, relevant)
+        if rel is None:
+            return False
+        irr = _yes_no(client, model, num_ctx, query, irrelevant)
+        if irr is None or rel < irr + RERANK_PROBE_MARGIN:
+            return False
+    return True
+
+
+def _yes_no(
+    client: OllamaClient,
+    model: str,
+    num_ctx: int,
+    query: str,
+    document: str,
+) -> float | None:
+    """One yes/no probability. An unfit pair is not sent and has no score."""
+    user = rerank_user(QUERY_INSTRUCTION, query, document)
+    if estimate_tokens(RERANK_SYSTEM) + estimate_tokens(user) + RERANK_OVERHEAD > num_ctx:
+        return None
+    result = client.chat(
+        model,
+        (
+            ChatMessage("system", RERANK_SYSTEM),
+            ChatMessage("user", user),
+        ),
+        num_ctx=num_ctx,
+        num_predict=1,
+        temperature=1,
+        keep_alive=KEEP_ALIVE_BATCH,
+        logprobs=True,
+        top_logprobs=RERANK_TOP_LOGPROBS,
+    )
+    if result.thinking.strip() != "":
+        return None
+    if result.logprobs is None or len(result.logprobs) != 1:
+        return None
+    return yes_no_score(result.logprobs[0])
+
+
+def _release_reranker(client: OllamaClient, model: str, outcome: _Outcome) -> None:
+    """Unload the reranker when it is loaded. Do not call release before that."""
+    try:
+        loaded = client.ps()
+    except RagError as exc:
+        _note_ollama(outcome, exc)
+        raise
+    names = [item.name for item in loaded]
+    if model not in names:
+        if names:
+            raise RagError(EXIT_RESOURCES, t("ask.models_still_loaded"))
+        return
+    try:
+        client.release_stage(model)
+    except RagError as exc:
+        logger.error("%s", t("log.unload_failed", model=model))
+        _note_ollama(outcome, exc)
+        raise
 
 
 def _append_neighbors(store: SqliteStore, direct: Sequence[Excerpt]) -> list[Excerpt]:
@@ -624,6 +881,14 @@ def _resolve_neighbors(config: Config, neighbors: bool | None) -> bool:
     if not isinstance(neighbors, bool):
         raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.neighbors"))
     return neighbors
+
+
+def _resolve_rerank(config: Config, rerank: bool | None) -> bool:
+    if rerank is None:
+        return config.rerank
+    if not isinstance(rerank, bool):
+        raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.rerank"))
+    return rerank
 
 
 def _resolve_k(config: Config, k: int | None) -> int:

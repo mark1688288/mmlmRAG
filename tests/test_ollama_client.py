@@ -58,10 +58,17 @@ class FakeOllama:
         self.drop_on_zero_keep_alive = False
         self.vectors = [[0.25, 0.5]]
         self.chat_message: dict = {"role": "assistant", "content": "答案", "thinking": ""}
+        self.chat_logprobs = None
+        self.rerank_replies: list[dict] | None = None
+        self.fail_logprob_chat: int | None = None
+        self._logprob_chat_count = 0
         self.tag_names = [EMBED, NINE_B_MODEL, FOUR_B_MODEL]
+        self.show_template = ""
+        self.show_status: int | None = None
         self.pull_body = '{"status":"pulling manifest"}\n{"status":"success"}\n'
         self.connect_error = False
         self.status_for: dict[str, int] = {}
+        self.stuck_models: set[str] = set()
 
     def client(self, base_url: str = "http://127.0.0.1:11434") -> OllamaClient:
         return OllamaClient(base_url, transport=httpx.MockTransport(self.handler))
@@ -93,6 +100,10 @@ class FakeOllama:
             return self._embed(body)
         if path == "/api/chat":
             return self._chat(body)
+        if path == "/api/show":
+            if self.show_status is not None:
+                return httpx.Response(self.show_status, json={"error": "missing"})
+            return httpx.Response(200, json={"template": self.show_template})
         if path == "/api/pull":
             return httpx.Response(200, text=self.pull_body)
         return httpx.Response(500, json={"error": "unexpected"})
@@ -117,18 +128,36 @@ class FakeOllama:
         )
 
     def _chat(self, body: dict) -> httpx.Response:
+        if body.get("logprobs") is True:
+            self._logprob_chat_count += 1
+            if self.fail_logprob_chat == self._logprob_chat_count:
+                self._show(body["model"], body["options"]["num_ctx"], body.get("keep_alive"))
+                return httpx.Response(500, json={"error": "score failed"})
         self._show(body["model"], body["options"]["num_ctx"], body.get("keep_alive"))
+        message = dict(self.chat_message)
+        extra: dict = {}
+        if body.get("logprobs") is True:
+            scripted = None
+            if self.rerank_replies:
+                scripted = self.rerank_replies.pop(0)
+            if scripted is not None:
+                message = scripted.get("message", message)
+                if "logprobs" in scripted:
+                    extra["logprobs"] = scripted["logprobs"]
+            elif self.chat_logprobs is not None:
+                extra["logprobs"] = self.chat_logprobs
         return httpx.Response(
             200,
             json={
-                "message": self.chat_message,
+                "message": message,
                 "prompt_eval_count": 3,
                 "eval_count": 5,
+                **extra,
             },
         )
 
     def _drop(self, model: str) -> None:
-        if self.stuck:
+        if self.stuck or model in self.stuck_models:
             return
         self.loaded = [item for item in self.loaded if item.get("name") != model]
 
@@ -504,7 +533,10 @@ def test_chat_think_is_top_level_and_thinking_is_not_the_answer(logs):
     assert "think" not in body["options"]
     assert body["keep_alive"] == "0"
     assert body["options"] == {"num_ctx": 8192, "num_predict": 768, "temperature": 0.2}
+    assert "logprobs" not in body
+    assert "top_logprobs" not in body
     assert body["messages"][1] == {"role": "user", "content": SECRET}
+    assert result.logprobs is None
     assert result.content == ""
     assert result.thinking == THOUGHT
     assert result.thinking_only is True
@@ -512,6 +544,72 @@ def test_chat_think_is_top_level_and_thinking_is_not_the_answer(logs):
     assert SECRET not in logs.text
     assert THOUGHT not in logs.text
     assert "eval_count=5" in logs.text
+
+
+def test_chat_logprobs_are_opt_in_and_read_beside_the_message():
+    fake = FakeOllama()
+    fake.chat_logprobs = [
+        {
+            "token": "yes",
+            "logprob": -0.01,
+            "top_logprobs": [
+                {"token": "yes", "logprob": -0.01, "bytes": [121, 101, 115]},
+                {"token": "no", "logprob": -4.6, "bytes": [110, 111]},
+            ],
+        }
+    ]
+    fake.chat_message = {
+        "role": "assistant",
+        "content": "yes",
+        "thinking": "",
+        "logprobs": [{"token": "ignored", "logprob": -9.0, "top_logprobs": []}],
+    }
+    result = fake.client().chat(
+        "qwen3-reranker:0.6b",
+        [ChatMessage("user", "capital of France")],
+        num_ctx=2048,
+        num_predict=1,
+        temperature=1,
+        keep_alive="30m",
+        logprobs=True,
+        top_logprobs=20,
+    )
+    body = fake.bodies("/api/chat")[-1]
+    assert body["think"] is False
+    assert "think" not in body["options"]
+    assert body["logprobs"] is True
+    assert body["top_logprobs"] == 20
+    assert body["options"]["temperature"] == 1
+    assert body["options"]["num_predict"] == 1
+    assert body["options"]["num_ctx"] == 2048
+    assert "/api/rerank" not in fake.paths()
+    assert result.logprobs == ((("yes", -0.01), ("no", -4.6)),)
+    assert "<think>" not in body["messages"][0]["content"]
+    assert "</think>" not in body["messages"][0]["content"]
+    plain = fake.client().chat(
+        NINE_B_MODEL,
+        [ChatMessage("user", "普通")],
+        num_ctx=8192,
+        num_predict=8,
+        temperature=0.2,
+        logprobs=False,
+        top_logprobs=20,
+    )
+    quiet = fake.bodies("/api/chat")[-1]
+    assert "logprobs" not in quiet
+    assert "top_logprobs" not in quiet
+    assert plain.logprobs is None
+    with pytest.raises(RagError) as exc:
+        fake.client().chat(
+            NINE_B_MODEL,
+            [ChatMessage("user", "普通")],
+            num_ctx=8192,
+            num_predict=8,
+            temperature=0.2,
+            logprobs=True,
+            top_logprobs=5,
+        )
+    assert exc.value.code == EXIT_USAGE
 
 
 def test_vision_request_uses_raw_base64_and_vision_options():

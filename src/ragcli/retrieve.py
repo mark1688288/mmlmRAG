@@ -1,16 +1,44 @@
-"""Pure helpers for hybrid retrieval.
+"""Pure helpers for hybrid retrieval and yes/no rerank scores.
 
 ``fts_match_query`` keeps protected spans only and never reads the corpus.
-``rrf_merge`` ranks by list position. Neither function calls Ollama.
+``rrf_merge`` ranks by list position. ``yes_no_score`` only reads token
+logprobs. None of these functions calls Ollama.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 RRF_K = 60
+RERANK_MODEL = "qwen3-reranker:0.6b"
+RERANK_TOP_LOGPROBS = 20
+RERANK_OVERHEAD = 200
+RERANK_PROBE_MARGIN = 0.2
+RERANK_SYSTEM = (
+    "Judge whether the Document meets the requirements based on the Query "
+    'and the Instruct provided. Note that the answer can only be "yes" or "no".'
+)
+# The installed tag must render this Go template. The client does not append it.
+RERANK_TEMPLATE = (
+    "{{- if .System }}<|im_start|>system\n"
+    "{{ .System }}<|im_end|>\n"
+    "{{ end }}\n"
+    "{{- range .Messages }}\n"
+    '{{- if eq .Role "user" }}<|im_start|>user\n'
+    "{{ .Content }}<|im_end|>\n"
+    '{{ else if eq .Role "assistant" }}<|im_start|>assistant\n'
+    "{{ .Content }}<|im_end|>\n"
+    "{{ end }}\n"
+    "{{- end }}<|im_start|>assistant\n"
+    "{{if not .Think}}<think>\n"
+    "\n"
+    "</think>\n"
+    "\n"
+    "{{ end }}\n"
+)
 _MAX_SPAN = 64
 _MAX_SPANS = 8
 _MIN_SPAN = 3
@@ -124,6 +152,59 @@ def rrf_merge(
         MergedHit(chunk_id=chunk_id, distance=distance, origin=origin)
         for _score, distance, chunk_id, origin in ranked[:limit]
     ]
+
+
+def yes_no_score(top: Sequence[tuple[str, float]]) -> float | None:
+    """Return P(yes) from the two-token softmax, or ``None`` if either is missing.
+
+    Token text must be exactly ``yes`` or ``no``. Case and surrounding spaces
+    are different tokens. The sampled ``content`` is not a score.
+    """
+    yes = next((logp for token, logp in top if token == "yes"), None)
+    no = next((logp for token, logp in top if token == "no"), None)
+    if yes is None or no is None:
+        return None
+    pivot = yes if yes > no else no
+    ey = math.exp(yes - pivot)
+    en = math.exp(no - pivot)
+    return ey / (ey + en)
+
+
+def rerank_user(instruction: str, query: str, document: str) -> str:
+    """User message for one yes/no score. The caller does not add a think block."""
+    return f"<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {document}"
+
+
+def template_accepts_rerank(template: str) -> bool:
+    """True when the tag template closes thinking before the first token.
+
+    A spaced ``{{ if not .Think }}`` still counts. The empty think block must
+    contain the substring ``<think>`` plus a blank line plus ``</think>``.
+    """
+    if not isinstance(template, str):
+        return False
+    return "not .Think" in template and "<think>\n\n</think>" in template
+
+
+def _probe_text(points: tuple[int, ...]) -> str:
+    return "".join(chr(point) for point in points)
+
+
+_PROBE_ZH_QUERY = _probe_text((0x6CD5, 0x570B, 0x9996, 0x90FD))
+_PROBE_ZH_RELEVANT = _probe_text(
+    (0x6CD5, 0x570B, 0x7684, 0x9996, 0x90FD, 0x662F, 0x5DF4, 0x9ECE, 0x3002)
+)
+_PROBE_ZH_IRRELEVANT = _probe_text(
+    (0x9019, 0x4EFD, 0x83DC, 0x55AE, 0x6709, 0x8336, 0x548C, 0x98EF, 0x3002)
+)
+RERANK_PROBE_PAIRS = (
+    (
+        "capital of France",
+        "Paris is the capital of France.",
+        "The menu lists tea and rice.",
+    ),
+    (_PROBE_ZH_QUERY, _PROBE_ZH_RELEVANT, _PROBE_ZH_IRRELEVANT),
+)
 
 
 def _protected_spans(question: str) -> list[str]:

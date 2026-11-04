@@ -196,6 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument(
         "--no-neighbors", action="store_true", help=t("help.ask.no_neighbors")
     )
+    ask.add_argument("--rerank", action="store_true", help=t("help.ask.rerank"))
+    ask.add_argument("--no-rerank", action="store_true", help=t("help.ask.no_rerank"))
     ask.add_argument("--model", help=t("help.ask.model"))
     ask.add_argument(
         "--no-fallback", action="store_true", help=t("help.ask.no_fallback")
@@ -435,6 +437,11 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
             EXIT_USAGE,
             t("usage.flag_conflict", on="--neighbors", off="--no-neighbors"),
         )
+    if bool(args.rerank) and bool(args.no_rerank):
+        raise RagError(
+            EXIT_USAGE,
+            t("usage.flag_conflict", on="--rerank", off="--no-rerank"),
+        )
     hybrid: bool | None
     if args.hybrid:
         hybrid = True
@@ -449,6 +456,13 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         neighbors = False
     else:
         neighbors = None
+    rerank: bool | None
+    if args.rerank:
+        rerank = True
+    elif args.no_rerank:
+        rerank = False
+    else:
+        rerank = None
     return run_ask(
         config,
         _question_text(args.question),
@@ -459,6 +473,7 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         as_json=bool(args.json),
         hybrid=hybrid,
         neighbors=neighbors,
+        rerank=rerank,
         lock_timeout=_lock_timeout(args),
     )
 

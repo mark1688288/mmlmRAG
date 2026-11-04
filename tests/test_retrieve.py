@@ -1,12 +1,32 @@
-"""Protected FTS spans and reciprocal rank fusion. No Ollama and no corpus."""
+"""Protected FTS spans, reciprocal rank fusion, and yes/no scores.
+
+No Ollama and no corpus. Probe sentences are built in ``retrieve.py`` with
+``chr`` so the source has no Han literals.
+"""
 
 from __future__ import annotations
 
+import math
 import sqlite3
+from pathlib import Path
 
 import pytest
 
-from ragcli.retrieve import MergedHit, _fts_phrase, fts_match_query, rrf_merge, rrf_score
+from ragcli.retrieve import (
+    RERANK_PROBE_PAIRS,
+    RERANK_TEMPLATE,
+    MergedHit,
+    _PROBE_ZH_IRRELEVANT,
+    _PROBE_ZH_QUERY,
+    _PROBE_ZH_RELEVANT,
+    _fts_phrase,
+    fts_match_query,
+    rerank_user,
+    rrf_merge,
+    rrf_score,
+    template_accepts_rerank,
+    yes_no_score,
+)
 
 _BODY = "根據第12條退款金額為100元。"
 
@@ -108,6 +128,53 @@ def test_rrf_example_one_orders_the_shared_hit_first():
     ]
     assert rrf_score([3, 1]) == pytest.approx(1 / 63 + 1 / 61)
     assert rrf_score([2]) == pytest.approx(1 / 62)
+
+
+def test_yes_no_score_needs_both_tokens_and_matches_softmax():
+    assert yes_no_score((("yes", -0.1),)) is None
+    assert yes_no_score((("Yes", -0.1), ("no", -1.0))) is None
+    assert yes_no_score((("yes ", -0.1), ("no", -1.0))) is None
+    yes = -0.2
+    no = -1.5
+    score = yes_no_score((("maybe", -3.0), ("yes", yes), ("no", no)))
+    pivot = max(yes, no)
+    expected = math.exp(yes - pivot) / (math.exp(yes - pivot) + math.exp(no - pivot))
+    assert score == pytest.approx(expected)
+
+
+def test_rerank_template_closes_thinking_in_nineteen_bytes():
+    block = "<think>\n\n</think>\n\n"
+    assert len(block.encode()) == 19
+    assert "{{if not .Think}}" in RERANK_TEMPLATE
+    assert block in RERANK_TEMPLATE
+    assert template_accepts_rerank(RERANK_TEMPLATE) is True
+    spaced = RERANK_TEMPLATE.replace("{{if not .Think}}", "{{ if not .Think }}")
+    assert template_accepts_rerank(spaced) is True
+    assert template_accepts_rerank(RERANK_TEMPLATE.replace("not .Think", "if .Think")) is False
+    assert template_accepts_rerank(RERANK_TEMPLATE.replace("<think>\n\n</think>", "")) is False
+
+
+def test_probe_pairs_are_code_points_and_the_user_text_has_no_think_block():
+    assert _PROBE_ZH_QUERY == "法國首都"
+    assert _PROBE_ZH_RELEVANT == "法國的首都是巴黎。"
+    assert _PROBE_ZH_IRRELEVANT == "這份菜單有茶和飯。"
+    assert RERANK_PROBE_PAIRS[0][0] == "capital of France"
+    assert RERANK_PROBE_PAIRS[1][0] == _PROBE_ZH_QUERY
+    source = (Path(__file__).resolve().parents[1] / "src" / "ragcli" / "retrieve.py").read_text(
+        encoding="utf-8"
+    )
+    assert "法國首都" not in source
+    assert "法國的首都是巴黎。" not in source
+    assert "這份菜單有茶和飯。" not in source
+    user = rerank_user(
+        "Given a web search query, retrieve relevant passages that answer the query",
+        "capital of France",
+        "Paris is the capital of France.",
+    )
+    assert "<think>" not in user
+    assert "</think>" not in user
+    assert "<|im_start|>" not in user
+    assert user.startswith("<Instruct>: ")
 
 
 def test_rrf_example_two_keeps_the_tied_vector_hit_ahead_of_fts():

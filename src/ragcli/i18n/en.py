@@ -430,4 +430,11 @@ MESSAGES = {
     "help.ask.neighbors": "Turn neighboring chunks on for this question",
     "help.ask.no_neighbors": "Turn neighboring chunks off for this question",
     "log.neighbors": "Neighboring chunks: {count}.",
+    "help.ask.rerank": "Turn reranking on for this question",
+    "help.ask.no_rerank": "Turn reranking off for this question",
+    "log.rerank_skipped": "Reranking skipped.",
+    "log.rerank_blocked": "Reranking blocked.",
+    "log.rerank_used": "Reranked chunks: {count}.",
+    "config.rerank_candidates": "retrieve.rerank_candidates must be from 15 to 20.",
+    "config.rerank_num_ctx": "retrieve.rerank_num_ctx must be from 1536 to 2048.",
 }

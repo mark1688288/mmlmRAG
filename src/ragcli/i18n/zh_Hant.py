@@ -379,4 +379,11 @@ MESSAGES = {
     "help.ask.neighbors": "這次開啟鄰段",
     "help.ask.no_neighbors": "這次關閉鄰段",
     "log.neighbors": "鄰段：{count}。",
+    "help.ask.rerank": "這次開啟重排",
+    "help.ask.no_rerank": "這次關閉重排",
+    "log.rerank_skipped": "已跳過重排。",
+    "log.rerank_blocked": "重排被擋下。",
+    "log.rerank_used": "重排留下 {count} 段。",
+    "config.rerank_candidates": "retrieve.rerank_candidates 必須是 15 到 20。",
+    "config.rerank_num_ctx": "retrieve.rerank_num_ctx 必須是 1536 到 2048。",
 }

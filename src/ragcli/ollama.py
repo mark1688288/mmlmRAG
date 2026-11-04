@@ -82,12 +82,18 @@ class ChatMessage:
 
 @dataclass(frozen=True, slots=True)
 class ChatResult:
-    """Assistant text. Thinking is kept apart and is never copied into ``content``."""
+    """Assistant text. Thinking is kept apart and is never copied into ``content``.
+
+    ``logprobs`` is one tuple per generated position. Each position is
+    ``(token, logprob)`` pairs from the top-level ``top_logprobs`` list.
+    The field is ``None`` when the response has no usable logprobs.
+    """
 
     content: str
     thinking: str
     prompt_eval_count: int | None
     eval_count: int | None
+    logprobs: tuple[tuple[tuple[str, float], ...], ...] | None = None
 
     @property
     def thinking_only(self) -> bool:
@@ -399,6 +405,24 @@ class OllamaClient:
         _log_counts("embed", payload)
         return vectors
 
+    def show_template(self, model: str) -> str:
+        """Return the Modelfile template from ``POST /api/show``.
+
+        This does not load the weights. A missing template is a failure.
+        """
+        _require_model(model)
+        payload = self._json(
+            "POST",
+            "/api/show",
+            json_body={"model": model},
+            read=META_READ_TIMEOUT_SECONDS,
+            model=model,
+        )
+        template = payload.get("template")
+        if not isinstance(template, str):
+            raise RagError(EXIT_UNCLASSIFIED, t("ollama.not_json"))
+        return template
+
     def chat(
         self,
         model: str,
@@ -409,8 +433,15 @@ class OllamaClient:
         temperature: float,
         keep_alive: str = KEEP_ALIVE_DONE,
         read_timeout: float = GENERATE_READ_TIMEOUT_SECONDS,
+        logprobs: bool = False,
+        top_logprobs: int = 0,
     ) -> ChatResult:
-        """Chat with top-level ``think: false``. Vision passes its own timeout."""
+        """Chat with top-level ``think: false``. Vision passes its own timeout.
+
+        ``logprobs`` defaults off, and then the JSON has neither ``logprobs``
+        nor ``top_logprobs``. Rerank passes both, and ``top_logprobs`` is only
+        allowed to be 20.
+        """
         _require_model(model)
         _require_num_ctx(num_ctx)
         alive = _require_keep_alive(keep_alive)
@@ -420,23 +451,31 @@ class OllamaClient:
             raise RagError(EXIT_USAGE, t("config.must_be_number", label="temperature"))
         if temperature < 0:
             raise RagError(EXIT_USAGE, t("config.not_negative", label="temperature"))
+        if not isinstance(logprobs, bool):
+            raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="logprobs"))
+        if logprobs and top_logprobs != 20:
+            raise RagError(EXIT_USAGE, t("usage.named_positive_int", name="top_logprobs"))
         body_messages = _message_payloads(messages)
+        json_body: dict = {
+            "model": model,
+            "stream": False,
+            "think": False,
+            "keep_alive": alive,
+            "messages": body_messages,
+            "options": {
+                "num_ctx": num_ctx,
+                "num_predict": num_predict,
+                "temperature": temperature,
+            },
+        }
+        if logprobs:
+            json_body["logprobs"] = True
+            json_body["top_logprobs"] = 20
         self.prepare_stage(model, num_ctx)
         payload = self._json(
             "POST",
             "/api/chat",
-            json_body={
-                "model": model,
-                "stream": False,
-                "think": False,
-                "keep_alive": alive,
-                "messages": body_messages,
-                "options": {
-                    "num_ctx": num_ctx,
-                    "num_predict": num_predict,
-                    "temperature": temperature,
-                },
-            },
+            json_body=json_body,
             read=read_timeout,
             model=model,
         )
@@ -798,7 +837,43 @@ def _chat_result(payload: Mapping) -> ChatResult:
         thinking=thinking,
         prompt_eval_count=_optional_count(payload.get("prompt_eval_count")),
         eval_count=_optional_count(payload.get("eval_count")),
+        logprobs=_chat_logprobs(payload),
     )
+
+
+def _chat_logprobs(
+    payload: Mapping,
+) -> tuple[tuple[tuple[str, float], ...], ...] | None:
+    """Read top-level ``logprobs``, never ``message["logprobs"]``.
+
+    A missing or mistyped field is ``None``. ``bytes`` is ignored. The chat
+    itself is still a successful response.
+    """
+    raw = payload.get("logprobs")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return None
+    positions: list[tuple[tuple[str, float], ...]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        top = item.get("top_logprobs")
+        if not isinstance(top, list):
+            return None
+        pairs: list[tuple[str, float]] = []
+        for entry in top:
+            if not isinstance(entry, dict):
+                return None
+            token = entry.get("token")
+            logp = entry.get("logprob")
+            if not isinstance(token, str):
+                return None
+            if isinstance(logp, bool) or not isinstance(logp, (int, float)):
+                return None
+            pairs.append((token, float(logp)))
+        positions.append(tuple(pairs))
+    return tuple(positions)
 
 
 def _optional_count(value: object) -> int | None:

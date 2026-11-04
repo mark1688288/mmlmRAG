@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import logging
 import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from ragcli.ask import (
+    QUERY_INSTRUCTION,
     document_embed_text,
     pack_excerpts,
     query_text,
@@ -46,6 +48,7 @@ from ragcli.prompt import (
     refusal_sentence,
     system_prompt,
 )
+from ragcli.retrieve import RERANK_MODEL, RERANK_SYSTEM, RERANK_TEMPLATE, rerank_user
 from ragcli.store.chroma import ChromaIndex, IndexRecord
 from ragcli.store.sqlite import ActiveIndex, SqliteStore, chunk_id_for
 from test_chroma_factory import FakeClient
@@ -77,6 +80,10 @@ def write_rag(
     k: int = 5,
     hybrid: bool | None = None,
     neighbors: bool | None = None,
+    rerank: bool | None = None,
+    rerank_model: str | None = None,
+    rerank_candidates: int | None = None,
+    rerank_num_ctx: int | None = None,
 ) -> Config:
     path = directory / "rag.toml"
     path.write_text(
@@ -102,6 +109,14 @@ def write_rag(
                     if neighbors is None
                     else [f"neighbors = {'true' if neighbors else 'false'}"]
                 ),
+                *([] if rerank is None else [f"rerank = {'true' if rerank else 'false'}"]),
+                *([] if rerank_model is None else [f'rerank_model = "{rerank_model}"']),
+                *(
+                    []
+                    if rerank_candidates is None
+                    else [f"rerank_candidates = {rerank_candidates}"]
+                ),
+                *([] if rerank_num_ctx is None else [f"rerank_num_ctx = {rerank_num_ctx}"]),
                 "[limits]",
                 f"min_free_bytes = {min_free}",
                 "",
@@ -124,6 +139,7 @@ class Corpus:
     """One temp rag.toml, one fake Ollama, and one fake Chroma client."""
 
     def __init__(self, tmp_path: Path, **kwargs) -> None:
+        tmp_path.mkdir(parents=True, exist_ok=True)
         self.config = write_rag(tmp_path, **kwargs)
         self.fake = FakeOllama()
         self.fake.vectors = [list(VECTOR)]
@@ -1499,3 +1515,618 @@ def test_cli_neighbors_override_the_config(monkeypatch, tmp_path):
     )
     assert hidden[0] == EXIT_OK
     assert "SIDE-HIT" not in chats(default.fake)[0]["messages"][1]["content"]
+
+
+HIGH_YES = -0.01
+HIGH_NO = -4.6
+LOW_YES = -4.6
+LOW_NO = -0.01
+
+
+@contextmanager
+def info_level():
+    logger = logging.getLogger("ragcli")
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+        yield
+    finally:
+        logger.setLevel(previous)
+
+
+def yes_no_reply(yes: float, no: float | None) -> dict:
+    top = [{"token": "yes", "logprob": yes}]
+    if no is not None:
+        top.append({"token": "no", "logprob": no})
+    return {
+        "message": {"role": "assistant", "content": "maybe", "thinking": ""},
+        "logprobs": [
+            {"token": "maybe", "logprob": yes, "top_logprobs": top},
+        ],
+    }
+
+
+def probe_pass() -> list[dict]:
+    return [
+        yes_no_reply(HIGH_YES, HIGH_NO),
+        yes_no_reply(LOW_YES, LOW_NO),
+        yes_no_reply(HIGH_YES, HIGH_NO),
+        yes_no_reply(LOW_YES, LOW_NO),
+    ]
+
+
+def arm_reranker(fake: FakeOllama, replies: list[dict], model: str = RERANK_MODEL) -> None:
+    if model not in fake.tag_names:
+        fake.tag_names.append(model)
+    fake.show_template = RERANK_TEMPLATE
+    fake.rerank_replies = list(replies)
+
+
+def asked_widths(corpus: Corpus) -> list[int]:
+    name = next(iter(corpus._chroma.collections))
+    return [query["n_results"] for query in corpus.collection(name).queries]
+
+
+def logprob_chats(fake: FakeOllama) -> list:
+    return [body for body in chats(fake) if body.get("logprobs") is True]
+
+
+def script_fts(monkeypatch, ranking: list[str]) -> list:
+    calls = []
+
+    def wrapped(self, match, limit):
+        calls.append((match, limit))
+        return [
+            (chunk_id, float(index))
+            for index, chunk_id in enumerate(ranking[:limit])
+        ]
+
+    monkeypatch.setattr(SqliteStore, "search_fts", wrapped)
+    return calls
+
+
+def seed_counterexample(corpus: Corpus) -> dict[str, str]:
+    corpus.seed(
+        [
+            {"text": "VEC-A", "distance": 0.1, "page": 1},
+            {"text": "VEC-B", "distance": 0.2, "page": 2},
+            {"text": "VEC-C", "distance": 0.3, "page": 3},
+        ]
+    )
+    insert_done(
+        corpus,
+        ordinal=3,
+        text="FTS-D",
+        embed_state="done",
+        page_start=4,
+        page_end=4,
+    )
+    return {
+        "A": chunk_id_for(DOC, 0),
+        "B": chunk_id_for(DOC, 1),
+        "C": chunk_id_for(DOC, 2),
+        "D": chunk_id_for(DOC, 3),
+    }
+
+
+def assert_rerank_request(body: dict, model: str = RERANK_MODEL) -> None:
+    assert body["model"] == model
+    assert body["stream"] is False
+    assert body["think"] is False
+    assert "think" not in body["options"]
+    assert body["options"]["temperature"] == 1
+    assert body["options"]["num_predict"] == 1
+    assert body["options"]["num_ctx"] == 2048
+    assert body["logprobs"] is True
+    assert body["top_logprobs"] == 20
+    assert body["keep_alive"] == "30m"
+    assert body["messages"][0]["content"] == RERANK_SYSTEM
+    encoded = json.dumps(body["messages"])
+    assert "<think>" not in encoded
+    assert "</think>" not in encoded
+    assert "<|im_start|>" not in encoded
+
+
+def assert_unloaded_before_generator(fake: FakeOllama, model: str = RERANK_MODEL) -> None:
+    chat_at = [index for index, item in enumerate(fake.seen) if item[1] == "/api/chat"]
+    unload_at = [
+        index
+        for index, item in enumerate(fake.seen)
+        if item[1] == "/api/generate"
+        and isinstance(item[2], dict)
+        and item[2].get("model") == model
+        and item[2].get("keep_alive") == 0
+    ]
+    assert chat_at
+    assert unload_at
+    assert chat_at[-2] < unload_at[-1] < chat_at[-1]
+    assert "logprobs" not in chats(fake)[-1]
+    assert "top_logprobs" not in chats(fake)[-1]
+
+
+def bind_cli(monkeypatch, corpus: Corpus) -> None:
+    monkeypatch.setattr(
+        "ragcli.ask.OllamaClient", lambda *_args, **_kwargs: corpus.fake.client()
+    )
+    monkeypatch.setattr("ragcli.ask.available_bytes", lambda: PLENTY)
+    original = ChromaIndex.open.__func__
+
+    def open_shared(cls, data_dir, client_factory=None):
+        return original(cls, data_dir, client_factory=corpus.factory)
+
+    monkeypatch.setattr(ChromaIndex, "open", classmethod(open_shared))
+
+
+def test_probe_failure_matches_rerank_off(tmp_path, monkeypatch, capsys):
+    ids = {
+        "A": chunk_id_for(DOC, 0),
+        "C": chunk_id_for(DOC, 2),
+        "D": chunk_id_for(DOC, 3),
+    }
+    calls = script_fts(monkeypatch, [ids["C"], ids["D"]])
+
+    def run(name: str, rerank: bool):
+        corpus = Corpus(tmp_path / name, k=2)
+        seed_counterexample(corpus)
+        if rerank:
+            arm_reranker(
+                corpus.fake,
+                [
+                    yes_no_reply(HIGH_YES, HIGH_NO),
+                    yes_no_reply(LOW_YES, LOW_NO),
+                    yes_no_reply(HIGH_YES, None),
+                ],
+            )
+        with info_level():
+            code = corpus.ask(
+                AMOUNT_QUESTION,
+                rerank=rerank,
+                neighbors=False,
+                as_json=True,
+            )
+        assert code == EXIT_OK
+        return corpus, json.loads(capsys.readouterr().out)
+
+    off_corpus, off = run("off", False)
+    on_corpus, on = run("on", True)
+    assert off["sources"] == on["sources"]
+    assert [item["chunk_id"] for item in on["sources"]] == [ids["A"], ids["C"]]
+    assert on["sources"][0]["origin"] == "vector"
+    assert on["sources"][0]["distance"] == 0.1
+    assert on["sources"][1]["origin"] == "fts"
+    assert on["sources"][1]["distance"] is None
+    assert on["model"] == NINE_B_MODEL
+    assert "rerank" not in on
+    assert asked_widths(off_corpus) == [2]
+    assert asked_widths(on_corpus) == [16]
+    assert calls == [('"100"', 2), ('"100"', 16)]
+    logged = log_text(on_corpus.config)
+    assert "Reranking blocked." in logged
+    assert "Reranking skipped." not in logged
+    assert "Reranked chunks:" not in logged
+    assert t_hybrid(2, 2, 2) in logged
+    assert t_hybrid(3, 2, 4) not in logged
+    assert "/api/rerank" not in on_corpus.fake.paths()
+    assert "/v1/rerank" not in on_corpus.fake.paths()
+    scored = logprob_chats(on_corpus.fake)
+    assert len(scored) == 3
+    for body in scored:
+        encoded = json.dumps(body)
+        assert "VEC-A" not in encoded
+        assert "VEC-C" not in encoded
+        assert "FTS-D" not in encoded
+    assert "logprobs" not in chats(on_corpus.fake)[-1]
+
+
+def test_rerank_orders_by_logprobs_not_the_sampled_word(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "NEAR-LOW", "distance": 0.1},
+            {"text": "FAR-HIGH", "distance": 0.4},
+        ]
+    )
+    question = "which passage"
+    arm_reranker(
+        corpus.fake,
+        [
+            *probe_pass(),
+            yes_no_reply(LOW_YES, LOW_NO),
+            yes_no_reply(HIGH_YES, HIGH_NO),
+        ],
+    )
+    with info_level():
+        code = corpus.ask(
+            question, rerank=True, hybrid=False, neighbors=False, as_json=True
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == EXIT_OK
+    assert [item["distance"] for item in payload["sources"]] == [0.4, 0.1]
+    assert payload["model"] == NINE_B_MODEL
+    assert payload["refused"] is False
+    logged = log_text(corpus.config)
+    assert "Reranked chunks: 2." in logged
+    assert "Hybrid retrieval:" not in logged
+    assert "Reranking blocked." not in logged
+    scored = logprob_chats(corpus.fake)
+    assert len(scored) == 6
+    for body in scored:
+        assert_rerank_request(body)
+    users = [body["messages"][1]["content"] for body in scored[4:]]
+    assert "NEAR-LOW" in users[0]
+    assert "FAR-HIGH" not in users[0]
+    assert "FAR-HIGH" in users[1]
+    assert f"<Query>: {question}" in users[0]
+    assert "Instruct: Given a web search query" not in users[0]
+    last = chats(corpus.fake)[-1]
+    assert last["model"] == NINE_B_MODEL
+    assert last["options"]["temperature"] == 0.2
+    assert last["messages"][1]["content"].index("FAR-HIGH") < last["messages"][1][
+        "content"
+    ].index("NEAR-LOW")
+    assert "Paris is the capital of France." not in last["messages"][1]["content"]
+    assert_unloaded_before_generator(corpus.fake)
+    assert corpus.fake.loaded == []
+    assert "/api/rerank" not in corpus.fake.paths()
+    assert latest_run(corpus.config).model_name == NINE_B_MODEL
+
+
+def test_equal_rerank_scores_keep_the_distance_order(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "NEAR-LOW", "distance": 0.1},
+            {"text": "FAR-HIGH", "distance": 0.4},
+        ]
+    )
+    arm_reranker(
+        corpus.fake,
+        [*probe_pass(), yes_no_reply(HIGH_YES, HIGH_NO), yes_no_reply(HIGH_YES, HIGH_NO)],
+    )
+    with info_level():
+        code = corpus.ask(
+            "which passage", rerank=True, hybrid=False, neighbors=False, as_json=True
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == EXIT_OK
+    assert [item["distance"] for item in payload["sources"]] == [0.1, 0.4]
+    assert "Reranked chunks: 2." in log_text(corpus.config)
+
+
+def test_one_missing_score_drops_the_whole_rerank(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "NEAR-LOW", "distance": 0.1},
+            {"text": "FAR-HIGH", "distance": 0.4},
+        ]
+    )
+    arm_reranker(
+        corpus.fake,
+        [*probe_pass(), yes_no_reply(LOW_YES, LOW_NO), yes_no_reply(HIGH_YES, None)],
+    )
+    with info_level():
+        code = corpus.ask(
+            "which passage", rerank=True, hybrid=False, neighbors=False, as_json=True
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == EXIT_OK
+    assert [item["distance"] for item in payload["sources"]] == [0.1, 0.4]
+    logged = log_text(corpus.config)
+    assert "Reranking blocked." in logged
+    assert "Reranked chunks:" not in logged
+    assert len(logprob_chats(corpus.fake)) == 6
+    assert corpus.fake.loaded == []
+
+
+def test_successful_rerank_logs_the_wide_hybrid_counts(tmp_path, monkeypatch, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "NEAR-LOW", "distance": 0.1},
+            {"text": "MID-MID", "distance": 0.2},
+            {"text": "FAR-HIGH", "distance": 0.4},
+        ]
+    )
+    arm_reranker(
+        corpus.fake,
+        [
+            *probe_pass(),
+            yes_no_reply(LOW_YES, LOW_NO),
+            yes_no_reply(-1.0, -1.0),
+            yes_no_reply(HIGH_YES, HIGH_NO),
+        ],
+    )
+    calls = watch_fts(monkeypatch)
+    with info_level():
+        code = corpus.ask("哪個更相關", rerank=True, neighbors=False, as_json=True)
+    payload = json.loads(capsys.readouterr().out)
+    assert code == EXIT_OK
+    assert calls == []
+    assert [item["distance"] for item in payload["sources"]] == [0.4, 0.2]
+    logged = log_text(corpus.config)
+    assert t_hybrid(3, 0, 3) in logged
+    assert t_hybrid(2, 0, 2) not in logged
+    assert "Reranked chunks: 2." in logged
+    assert logged.count("Hybrid retrieval:") == 1
+
+
+def test_rerank_stays_off_without_the_flag(tmp_path):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "NEAR-LOW", "distance": 0.1},
+            {"text": "FAR-HIGH", "distance": 0.4},
+        ]
+    )
+    arm_reranker(corpus.fake, probe_pass())
+    assert corpus.ask("短問", neighbors=False) == EXIT_OK
+    assert "/api/show" not in corpus.fake.paths()
+    assert asked_widths(corpus) == [2]
+    assert logprob_chats(corpus.fake) == []
+    assert "Reranking skipped." not in log_text(corpus.config)
+
+
+def test_missing_reranker_matches_rerank_off(tmp_path, monkeypatch, capsys):
+    ids = {
+        "A": chunk_id_for(DOC, 0),
+        "C": chunk_id_for(DOC, 2),
+        "D": chunk_id_for(DOC, 3),
+    }
+    calls = script_fts(monkeypatch, [ids["C"], ids["D"]])
+
+    def run(name: str, rerank: bool):
+        corpus = Corpus(tmp_path / name, k=2)
+        seed_counterexample(corpus)
+        code = corpus.ask(
+            AMOUNT_QUESTION, rerank=rerank, neighbors=False, as_json=True
+        )
+        assert code == EXIT_OK
+        return corpus, json.loads(capsys.readouterr().out)
+
+    off_corpus, off = run("off", False)
+    on_corpus, on = run("on", True)
+    assert off["sources"] == on["sources"]
+    assert asked_widths(on_corpus) == [2]
+    assert asked_widths(off_corpus) == [2]
+    assert calls == [('"100"', 2), ('"100"', 2)]
+    assert "/api/show" not in on_corpus.fake.paths()
+    assert logprob_chats(on_corpus.fake) == []
+    assert "/api/rerank" not in on_corpus.fake.paths()
+    assert "Reranking skipped." in log_text(on_corpus.config)
+    assert "Reranking blocked." not in log_text(on_corpus.config)
+
+
+def test_bad_template_skips_before_loading(tmp_path):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "甲段", "distance": 0.2}])
+    corpus.fake.tag_names.append(RERANK_MODEL)
+    corpus.fake.show_template = "plain"
+    assert corpus.ask("短問", rerank=True, neighbors=False) == EXIT_OK
+    assert asked_widths(corpus) == [2]
+    assert logprob_chats(corpus.fake) == []
+    assert "Reranking skipped." in log_text(corpus.config)
+    assert latest_run(corpus.config).exit_code == EXIT_OK
+
+
+def test_show_404_skips_rerank_and_stays_exit_0(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "甲段", "distance": 0.2}])
+    corpus.fake.tag_names.append(RERANK_MODEL)
+    corpus.fake.show_status = 404
+    code = corpus.ask("短問", rerank=True, neighbors=False)
+    assert code == EXIT_OK
+    assert capsys.readouterr().out.strip() != ""
+    assert asked_widths(corpus) == [2]
+    assert logprob_chats(corpus.fake) == []
+    logged = log_text(corpus.config)
+    assert "Reranking skipped." in logged
+    assert "rag models pull" not in logged
+    assert "ollama pull" not in logged
+    assert latest_run(corpus.config).exit_code == EXIT_OK
+
+
+def test_unfit_rerank_context_skips_before_show(tmp_path):
+    corpus = Corpus(tmp_path, k=2, max_question=2000)
+    corpus.seed([{"text": "甲段", "distance": 0.2}])
+    arm_reranker(corpus.fake, probe_pass())
+    assert corpus.ask("短問", rerank=True, neighbors=False) == EXIT_OK
+    assert "/api/show" not in corpus.fake.paths()
+    assert asked_widths(corpus) == [2]
+    assert "Reranking skipped." in log_text(corpus.config)
+    assert logprob_chats(corpus.fake) == []
+
+
+def test_oversize_document_blocks_after_the_probe(tmp_path):
+    text = "LONGCHUNK" + ("x" * 8000)
+    question = "長文"
+    user = rerank_user(QUERY_INSTRUCTION, question, text)
+    assert estimate_tokens(RERANK_SYSTEM) + estimate_tokens(user) + 200 > 2048
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": text, "distance": 0.2}])
+    arm_reranker(corpus.fake, probe_pass())
+    assert corpus.ask(question, rerank=True, hybrid=False, neighbors=False) == EXIT_OK
+    assert asked_widths(corpus) == [16]
+    scored = logprob_chats(corpus.fake)
+    assert len(scored) == 4
+    assert all("LONGCHUNK" not in json.dumps(body) for body in scored)
+    assert "LONGCHUNK" in chats(corpus.fake)[-1]["messages"][1]["content"]
+    assert "Reranking blocked." in log_text(corpus.config)
+    assert "Reranking skipped." not in log_text(corpus.config)
+    assert corpus.fake.loaded == []
+
+
+def test_ready_rerank_still_stops_at_the_distance_gate(tmp_path, monkeypatch, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "GATE-HIT", "distance": 0.9, "page": 3}])
+    arm_reranker(corpus.fake, probe_pass())
+    calls = watch_fts(monkeypatch)
+    code = corpus.ask(AMOUNT_QUESTION, rerank=True, show_chunks=True)
+    err = capsys.readouterr().err
+    assert code == EXIT_OK
+    assert calls == []
+    assert chats(corpus.fake) == []
+    assert asked_widths(corpus) == [16]
+    assert "/api/show" in corpus.fake.paths()
+    assert "origin=vector" in err
+    assert "distance=0.900000" in err
+
+
+def test_skipped_rerank_keeps_k_at_the_distance_gate(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "GATE-HIT", "distance": 0.9}])
+    calls = watch_fts(monkeypatch)
+    assert corpus.ask(AMOUNT_QUESTION, rerank=True) == EXIT_OK
+    assert calls == []
+    assert chats(corpus.fake) == []
+    assert asked_widths(corpus) == [2]
+    assert "/api/show" not in corpus.fake.paths()
+    assert "Reranking skipped." in log_text(corpus.config)
+
+
+def test_default_reranker_does_not_use_the_nine_gigabyte_gate(tmp_path):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "記憶體", "distance": 0.2}])
+    arm_reranker(corpus.fake, [])
+    assert corpus.ask("記憶體", rerank=True, neighbors=False, available=SEVEN_GIB) == EXIT_OK
+    assert asked_widths(corpus) == [16]
+    assert chats(corpus.fake)[-1]["model"] == FOUR_B_MODEL
+    assert "Reranking skipped." not in log_text(corpus.config)
+
+
+def test_other_rerank_names_use_the_generator_memory_gates(tmp_path):
+    cases = (
+        (NINE_B_MODEL, SEVEN_GIB, False),
+        (FOUR_B_MODEL, SEVEN_GIB, True),
+        ("custom-rerank:1b", SEVEN_GIB, False),
+        ("custom-rerank:1b", PLENTY, True),
+    )
+    for index, (model, available, widens) in enumerate(cases):
+        directory = tmp_path / f"{index}-{model.replace(':', '-').replace('/', '-')}"
+        corpus = Corpus(directory, k=2, rerank_model=model)
+        corpus.seed([{"text": "記憶體", "distance": 0.2}])
+        arm_reranker(corpus.fake, [], model=model)
+        assert (
+            corpus.ask("記憶體", rerank=True, neighbors=False, available=available) == EXIT_OK
+        )
+        assert asked_widths(corpus) == [16 if widens else 2]
+
+
+def test_four_b_reranker_accepts_the_exact_minimum(tmp_path):
+    corpus = Corpus(tmp_path, k=2, rerank_model=FOUR_B_MODEL)
+    corpus.seed([{"text": "記憶體", "distance": 0.2}])
+    arm_reranker(corpus.fake, [], model=FOUR_B_MODEL)
+    need = corpus.config.four_b_min_bytes
+    assert corpus.ask("記憶體", rerank=True, neighbors=False, available=need) == EXIT_OK
+    expect(
+        lambda: corpus.ask("記憶體", rerank=True, neighbors=False, available=need - 1),
+        EXIT_RESOURCES,
+        "below",
+    )
+    assert asked_widths(corpus) == [16, 2]
+    assert "Reranking skipped." in log_text(corpus.config)
+
+
+def test_stuck_reranker_is_exit_13_and_does_not_generate(tmp_path):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "卡住", "distance": 0.2}])
+    arm_reranker(corpus.fake, [])
+    corpus.fake.stuck_models.add(RERANK_MODEL)
+    caught = expect(
+        lambda: corpus.ask("卡住", rerank=True, neighbors=False),
+        EXIT_RESOURCES,
+        "After unloading, ollama ps is still not empty.",
+    )
+    assert "卡住" not in caught.message
+    assert [item["name"] for item in corpus.fake.loaded] == [RERANK_MODEL]
+    assert chats(corpus.fake)
+    assert all(body["model"] == RERANK_MODEL for body in chats(corpus.fake))
+    run = latest_run(corpus.config)
+    assert run.exit_code == EXIT_RESOURCES
+    assert run.ollama_error_count >= 1
+    assert run.model_name is None
+
+
+def test_scoring_error_falls_back_and_still_unloads(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "NEAR-LOW", "distance": 0.1},
+            {"text": "FAR-HIGH", "distance": 0.4},
+        ]
+    )
+    arm_reranker(corpus.fake, probe_pass())
+    corpus.fake.fail_logprob_chat = 5
+    code = corpus.ask(
+        "which passage", rerank=True, hybrid=False, neighbors=False, as_json=True
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == EXIT_OK
+    assert [item["distance"] for item in payload["sources"]] == [0.1, 0.4]
+    assert payload["model"] == NINE_B_MODEL
+    assert "Reranking blocked." in log_text(corpus.config)
+    assert corpus.fake.loaded == []
+    assert chats(corpus.fake)[-1]["model"] == NINE_B_MODEL
+    assert "logprobs" not in chats(corpus.fake)[-1]
+    assert len(logprob_chats(corpus.fake)) == 5
+    run = latest_run(corpus.config)
+    assert run.exit_code == EXIT_OK
+    assert run.ollama_error_count >= 1
+    assert_unloaded_before_generator(corpus.fake)
+
+
+def test_rerank_unreachable_is_exit_6(tmp_path):
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": "離線", "distance": 0.1}])
+    corpus.fake.connect_error = True
+    expect(
+        lambda: corpus.ask("離線", rerank=True),
+        EXIT_OLLAMA_UNREACHABLE,
+        "Cannot reach Ollama.",
+    )
+    run = latest_run(corpus.config)
+    assert run.exit_code == EXIT_OLLAMA_UNREACHABLE
+    assert run.ollama_error_count >= 1
+    assert "Reranking skipped." not in log_text(corpus.config)
+    assert chats(corpus.fake) == []
+
+
+def test_config_rerank_widens_until_the_argument_turns_it_off(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=2, rerank=True)
+    corpus.seed([{"text": "甲段", "distance": 0.2}])
+    arm_reranker(corpus.fake, [])
+    calls = watch_fts(monkeypatch)
+    assert corpus.ask(AMOUNT_QUESTION, neighbors=False) == EXIT_OK
+    assert calls == [('"100"', 16)]
+    assert "/api/show" in corpus.fake.paths()
+    corpus.fake.seen.clear()
+    assert corpus.ask(AMOUNT_QUESTION, neighbors=False, rerank=False) == EXIT_OK
+    assert calls[-1] == ('"100"', 2)
+    assert "/api/show" not in corpus.fake.paths()
+
+
+def test_cli_rerank_flags_override_the_config(monkeypatch, tmp_path):
+    off = Corpus(tmp_path / "off", k=2)
+    on = Corpus(tmp_path / "on", k=2, rerank=True)
+    for corpus in (off, on):
+        corpus.seed([{"text": "甲段", "distance": 0.2}])
+        arm_reranker(corpus.fake, [])
+    calls = watch_fts(monkeypatch)
+    bind_cli(monkeypatch, off)
+    widened = invoke(
+        monkeypatch,
+        ["ask", "--k", "2", "--rerank", "--no-neighbors", AMOUNT_QUESTION],
+        cwd=tmp_path / "off",
+    )
+    assert widened[0] == EXIT_OK
+    assert calls == [('"100"', 16)]
+    assert "/api/show" in off.fake.paths()
+    bind_cli(monkeypatch, on)
+    narrowed = invoke(
+        monkeypatch,
+        ["ask", "--k", "2", "--no-rerank", "--no-neighbors", AMOUNT_QUESTION],
+        cwd=tmp_path / "on",
+    )
+    assert narrowed[0] == EXIT_OK
+    assert calls[-1] == ('"100"', 2)
+    assert "/api/show" not in on.fake.paths()

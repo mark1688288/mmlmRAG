@@ -39,7 +39,17 @@ _SECTIONS: dict[str, frozenset[str]] = {
         }
     ),
     "retrieve": frozenset(
-        {"k", "max_cosine_distance", "max_question_tokens", "hybrid", "neighbors"}
+        {
+            "k",
+            "max_cosine_distance",
+            "max_question_tokens",
+            "hybrid",
+            "neighbors",
+            "rerank",
+            "rerank_model",
+            "rerank_candidates",
+            "rerank_num_ctx",
+        }
     ),
     "chunk": frozenset({"target_tokens", "max_tokens", "overlap_tokens"}),
     "ocr": frozenset(
@@ -84,6 +94,10 @@ class Config:
     max_question_tokens: int
     hybrid: bool
     neighbors: bool
+    rerank: bool
+    rerank_model: str
+    rerank_candidates: int
+    rerank_num_ctx: int
     chunk_target_tokens: int
     chunk_max_tokens: int
     chunk_overlap_tokens: int
@@ -137,6 +151,16 @@ def load_config(
     k = _int(retrieve, "k", 5, "retrieve.k", minimum=1)
     if k > 8:
         raise RagError(EXIT_USAGE, t("config.retrieve_k"))
+    rerank_candidates = _plain_int(
+        retrieve, "rerank_candidates", 16, "retrieve.rerank_candidates"
+    )
+    if not 15 <= rerank_candidates <= 20:
+        raise RagError(EXIT_USAGE, t("config.rerank_candidates"))
+    rerank_num_ctx = _plain_int(
+        retrieve, "rerank_num_ctx", 2048, "retrieve.rerank_num_ctx"
+    )
+    if not 1536 <= rerank_num_ctx <= 2048:
+        raise RagError(EXIT_USAGE, t("config.rerank_num_ctx"))
 
     level = _string(ocr, "recognition_level", "accurate", "ocr.recognition_level")
     if level != "accurate":
@@ -194,6 +218,12 @@ def load_config(
         ),
         hybrid=_bool(retrieve, "hybrid", True, "retrieve.hybrid"),
         neighbors=_bool(retrieve, "neighbors", True, "retrieve.neighbors"),
+        rerank=_bool(retrieve, "rerank", False, "retrieve.rerank"),
+        rerank_model=_model_name(
+            retrieve, "rerank_model", "qwen3-reranker:0.6b", "retrieve.rerank_model"
+        ),
+        rerank_candidates=rerank_candidates,
+        rerank_num_ctx=rerank_num_ctx,
         chunk_target_tokens=_int(
             chunk, "target_tokens", 480, "chunk.target_tokens", minimum=1
         ),
@@ -252,6 +282,10 @@ def format_config(config: Config) -> str:
         f"retrieve.max_question_tokens={config.max_question_tokens}",
         f"retrieve.hybrid={'true' if config.hybrid else 'false'}",
         f"retrieve.neighbors={'true' if config.neighbors else 'false'}",
+        f"retrieve.rerank={'true' if config.rerank else 'false'}",
+        f"retrieve.rerank_model={config.rerank_model}",
+        f"retrieve.rerank_candidates={config.rerank_candidates}",
+        f"retrieve.rerank_num_ctx={config.rerank_num_ctx}",
         f"chunk.target_tokens={config.chunk_target_tokens}",
         f"chunk.max_tokens={config.chunk_max_tokens}",
         f"chunk.overlap_tokens={config.chunk_overlap_tokens}",
@@ -443,6 +477,28 @@ def _int(table: dict, key: str, default: int, label: str, *, minimum: int) -> in
             EXIT_USAGE, t("config.minimum", label=label, minimum=minimum)
         )
     return value
+
+
+def _model_name(table: dict, key: str, default: str, label: str) -> str:
+    value = _string(table, key, default, label)
+    from ragcli.ollama import valid_model_name
+
+    if not valid_model_name(value):
+        raise RagError(EXIT_USAGE, t("model.name_invalid"))
+    return value
+
+
+def _plain_int(table: dict, key: str, default: int, label: str) -> int:
+    """Read an int and leave the range check to the caller.
+
+    The caller raises its own message, so ``t()`` stays a string constant.
+    """
+    if key not in table:
+        return default
+    raw = table[key]
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise RagError(EXIT_USAGE, t("config.must_be_int", label=label))
+    return raw
 
 
 def _bool(table: dict, key: str, default: bool, label: str) -> bool:
