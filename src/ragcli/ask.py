@@ -2,9 +2,10 @@
 
 The query string uses the Qwen3-Embedding instruction. Document text does
 not. ``Query:`` has no space before the question. Hits whose best cosine
-distance is above the configured gate never load a generator and do not
-query FTS. When hybrid retrieval is on, vector hits and FTS hits are
-merged with RRF and packed in that order. A chunk that does not fit is
+distance is above the configured gate never load a generator, do not query
+FTS, and do not expand neighboring chunks. When hybrid retrieval is on,
+vector hits and FTS hits are merged with RRF. Same-document chunks at
+ordinal ±1 then follow those direct hits. A chunk that does not fit is
 left out whole, and if the first chunk does not fit the prompt is not sent.
 """
 
@@ -57,7 +58,7 @@ from ragcli.prompt import (
 )
 from ragcli.retrieve import MergedHit, fts_match_query, rrf_merge
 from ragcli.store.chroma import ChromaIndex, QueryHit
-from ragcli.store.sqlite import Run, SqliteStore
+from ragcli.store.sqlite import Chunk, Run, SqliteStore
 
 logger = logging.getLogger("ragcli.ask")
 
@@ -167,6 +168,7 @@ def run_ask(
     show_chunks: bool = False,
     as_json: bool = False,
     hybrid: bool | None = None,
+    neighbors: bool | None = None,
     lock_timeout: float | None = None,
     client: OllamaClient | None = None,
     available: int | None = None,
@@ -180,6 +182,7 @@ def run_ask(
         raise RagError(EXIT_USAGE, t("model.name_invalid"))
     limit = _resolve_k(config, k)
     use_hybrid = _resolve_hybrid(config, hybrid)
+    use_neighbors = _resolve_neighbors(config, neighbors)
     _require_disk(config, free_bytes)
     with _session(config, clock, client_factory=client_factory) as (store, index, outcome):
         _execute(
@@ -194,6 +197,7 @@ def run_ask(
             show_chunks=show_chunks,
             as_json=as_json,
             hybrid=use_hybrid,
+            neighbors=use_neighbors,
             lock_timeout=lock_timeout,
             client=client,
             available=available,
@@ -214,6 +218,7 @@ def _execute(
     show_chunks: bool,
     as_json: bool,
     hybrid: bool,
+    neighbors: bool,
     lock_timeout: float | None,
     client: OllamaClient | None,
     available: int | None,
@@ -268,6 +273,8 @@ def _execute(
             outcome.refused_count = 1
             return
         selected = _select_hits(store, question, ordered, k=k, hybrid=hybrid)
+        if neighbors:
+            selected = _append_neighbors(store, selected)
         if show_chunks:
             _print_hits(selected)
         prompt = system_prompt()
@@ -455,6 +462,51 @@ def _select_hits(
     return selected
 
 
+def _append_neighbors(store: SqliteStore, direct: Sequence[Excerpt]) -> list[Excerpt]:
+    """Place same-document ordinal ±1 chunks after every direct hit.
+
+    A chunk already used by a direct hit or an earlier neighbor is skipped.
+    A missing ordinal is not an error. Neighbors are not expanded again.
+    ``anchor_chunk_id`` is not read.
+    """
+    seen = {item.chunk_id for item in direct}
+    neighbors: list[Excerpt] = []
+    for item in direct:
+        if item.doc_id == "" or item.ordinal is None:
+            continue
+        wanted: list[int] = []
+        if item.ordinal > 0:
+            wanted.append(item.ordinal - 1)
+        wanted.append(item.ordinal + 1)
+        rows = {
+            row.ordinal: row for row in store.chunks_by_ordinals(item.doc_id, wanted)
+        }
+        for ordinal in wanted:
+            row = rows.get(ordinal)
+            if row is None or row.chunk_id in seen:
+                continue
+            seen.add(row.chunk_id)
+            neighbors.append(_neighbor_excerpt(store, row, item))
+    logger.info("%s", t("log.neighbors", count=len(neighbors)))
+    return [*direct, *neighbors]
+
+
+def _neighbor_excerpt(store: SqliteStore, chunk: Chunk, parent: Excerpt) -> Excerpt:
+    """One adjacent row. Distance is the parent's. Text and page are this row's."""
+    document = store.get_document(chunk.doc_id)
+    return Excerpt(
+        chunk_id=chunk.chunk_id,
+        filename="" if document is None else document.filename,
+        page=-1 if chunk.page_start is None else chunk.page_start,
+        kind=chunk.kind,
+        text=chunk.text,
+        distance=parent.distance,
+        doc_id=chunk.doc_id,
+        ordinal=chunk.ordinal,
+        origin="neighbor",
+    )
+
+
 def _excerpt(hit: QueryHit, *, origin: str = "vector") -> Excerpt:
     return Excerpt(
         chunk_id=hit.chunk_id,
@@ -564,6 +616,14 @@ def _resolve_hybrid(config: Config, hybrid: bool | None) -> bool:
     if not isinstance(hybrid, bool):
         raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.hybrid"))
     return hybrid
+
+
+def _resolve_neighbors(config: Config, neighbors: bool | None) -> bool:
+    if neighbors is None:
+        return config.neighbors
+    if not isinstance(neighbors, bool):
+        raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.neighbors"))
+    return neighbors
 
 
 def _resolve_k(config: Config, k: int | None) -> int:

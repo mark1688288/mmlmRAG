@@ -1166,6 +1166,41 @@ def test_fts_follows_embed_state(store: SqliteStore):
     assert store.count_fts_rows() == 0
 
 
+def test_chunks_by_ordinals_returns_done_rows_for_one_document(store: SqliteStore):
+    store.insert_document(make_document())
+    store.insert_document(
+        make_document(
+            DOC_B,
+            source_path="/docs/other.md",
+            media_type="text",
+            parser="text",
+        )
+    )
+    anchor = make_chunk(ordinal=0, text="ANCHOR-FAR", embed_state="done")
+    left = make_chunk(ordinal=1, text="LEFT", embed_state="done", page_start=2, page_end=2)
+    figure = make_chunk(
+        ordinal=2,
+        text="FIG",
+        kind="figure",
+        embed_state="done",
+        page_start=4,
+        page_end=4,
+        anchor_chunk_id=anchor.chunk_id,
+    )
+    pending = make_chunk(ordinal=3, text="PENDING", embed_state="pending")
+    other = make_chunk(DOC_B, ordinal=1, text="OTHER", embed_state="done")
+    for chunk in (anchor, left, figure, pending, other):
+        store.insert_chunk(chunk)
+
+    assert store.chunks_by_ordinals(DOC, []) == []
+    assert [chunk.ordinal for chunk in store.chunks_by_ordinals(DOC, [3, 1, 9, 1])] == [1]
+    assert [chunk.ordinal for chunk in store.chunks_by_ordinals(DOC, [2])] == [2]
+    assert [chunk.ordinal for chunk in store.chunks_by_ordinals(DOC, [2, 0])] == [0, 2]
+    assert store.chunks_by_ordinals(DOC, [2])[0].kind == "figure"
+    assert store.chunks_by_ordinals(DOC, [2])[0].text == "FIG"
+    assert [chunk.text for chunk in store.chunks_by_ordinals(DOC_B, [1, 2])] == ["OTHER"]
+
+
 def test_search_fts_error_omits_the_query(store: SqliteStore, caplog):
     caplog.set_level(logging.WARNING)
     store.insert_document(make_document())

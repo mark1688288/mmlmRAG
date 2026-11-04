@@ -172,8 +172,12 @@ def test_ask_help_lists_hybrid_flags(monkeypatch, tmp_path):
     assert err == ""
     assert "--hybrid" in out
     assert "--no-hybrid" in out
+    assert "--neighbors" in out
+    assert "--no-neighbors" in out
     assert "Turn hybrid retrieval on for this question" in flat(out)
     assert "Turn hybrid retrieval off for this question" in flat(out)
+    assert "Turn neighboring chunks on for this question" in flat(out)
+    assert "Turn neighboring chunks off for this question" in flat(out)
 
 
 def test_hybrid_flags_cannot_both_be_set(monkeypatch, tmp_path):
@@ -199,6 +203,61 @@ def test_hybrid_flag_conflict_follows_zh(monkeypatch, tmp_path):
     assert out == ""
     assert "不可以同時指定 --hybrid 同 --no-hybrid。" in err
     assert "cannot both be set" not in err
+
+
+def test_neighbor_flags_cannot_both_be_set(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["ask", "--neighbors", "--no-neighbors", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "--neighbors and --no-neighbors cannot both be set." in err
+
+
+def test_neighbor_flag_conflict_follows_zh(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "zh", "ask", "--neighbors", "--no-neighbors", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "不可以同時指定 --neighbors 同 --no-neighbors。" in err
+    assert "cannot both be set" not in err
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[retrieve]\nneighbors = 1\n",
+        '[retrieve]\nneighbors = "yes"\n',
+    ],
+)
+def test_neighbors_must_be_a_boolean(monkeypatch, tmp_path, body):
+    write_config(tmp_path, body)
+    code, _out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert "retrieve.neighbors must be a boolean." in err
+
+
+def test_neighbors_false_is_shown(monkeypatch, tmp_path):
+    write_config(tmp_path, "[retrieve]\nneighbors = false\n")
+    code, out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    assert shown(out)["retrieve.neighbors"] == "false"
 
 
 @pytest.mark.parametrize(
@@ -282,6 +341,7 @@ def test_repo_config_show_matches_design(monkeypatch, tmp_path):
         "retrieve.max_cosine_distance": "0.85",
         "retrieve.max_question_tokens": "512",
         "retrieve.hybrid": "true",
+        "retrieve.neighbors": "true",
         "chunk.target_tokens": "480",
         "chunk.max_tokens": "640",
         "chunk.overlap_tokens": "80",
@@ -1380,9 +1440,11 @@ def test_help_text_is_translated_inside_parser_builders():
         for message_id in by_function[name]
         if message_id.startswith("help.")
     ]
-    assert len(help_calls) == 48
+    assert len(help_calls) == 50
     assert help_calls.count("help.ask.hybrid") == 1
     assert help_calls.count("help.ask.no_hybrid") == 1
+    assert help_calls.count("help.ask.neighbors") == 1
+    assert help_calls.count("help.ask.no_neighbors") == 1
     assert help_calls.count("help.metavar.action") == 2
     assert "help.lang" in by_function["_add_globals"]
     assert by_function["_CatalogHelpFormatter._format_usage"] == ["help.usage_prefix"]

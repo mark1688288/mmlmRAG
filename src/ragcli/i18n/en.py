@@ -427,4 +427,7 @@ MESSAGES = {
     "config.retrieve_bool": "{label} must be a boolean.",
     "usage.flag_conflict": "{on} and {off} cannot both be set.",
     "status.hit.origin": " origin={origin}",
+    "help.ask.neighbors": "Turn neighboring chunks on for this question",
+    "help.ask.no_neighbors": "Turn neighboring chunks off for this question",
+    "log.neighbors": "Neighboring chunks: {count}.",
 }

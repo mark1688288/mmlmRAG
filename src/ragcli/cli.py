@@ -192,6 +192,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--k", type=_k_value, help=t("help.ask.k"))
     ask.add_argument("--hybrid", action="store_true", help=t("help.ask.hybrid"))
     ask.add_argument("--no-hybrid", action="store_true", help=t("help.ask.no_hybrid"))
+    ask.add_argument("--neighbors", action="store_true", help=t("help.ask.neighbors"))
+    ask.add_argument(
+        "--no-neighbors", action="store_true", help=t("help.ask.no_neighbors")
+    )
     ask.add_argument("--model", help=t("help.ask.model"))
     ask.add_argument(
         "--no-fallback", action="store_true", help=t("help.ask.no_fallback")
@@ -426,6 +430,11 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
             EXIT_USAGE,
             t("usage.flag_conflict", on="--hybrid", off="--no-hybrid"),
         )
+    if bool(args.neighbors) and bool(args.no_neighbors):
+        raise RagError(
+            EXIT_USAGE,
+            t("usage.flag_conflict", on="--neighbors", off="--no-neighbors"),
+        )
     hybrid: bool | None
     if args.hybrid:
         hybrid = True
@@ -433,6 +442,13 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         hybrid = False
     else:
         hybrid = None
+    neighbors: bool | None
+    if args.neighbors:
+        neighbors = True
+    elif args.no_neighbors:
+        neighbors = False
+    else:
+        neighbors = None
     return run_ask(
         config,
         _question_text(args.question),
@@ -442,6 +458,7 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         show_chunks=bool(args.show_chunks),
         as_json=bool(args.json),
         hybrid=hybrid,
+        neighbors=neighbors,
         lock_timeout=_lock_timeout(args),
     )
 

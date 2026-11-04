@@ -376,4 +376,7 @@ MESSAGES = {
     "config.retrieve_bool": "{label} 必須是布林值。",
     "usage.flag_conflict": "不可以同時指定 {on} 同 {off}。",
     "status.hit.origin": " origin={origin}",
+    "help.ask.neighbors": "這次開啟鄰段",
+    "help.ask.no_neighbors": "這次關閉鄰段",
+    "log.neighbors": "鄰段：{count}。",
 }

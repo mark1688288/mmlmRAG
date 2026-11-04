@@ -51,7 +51,7 @@ from ragcli.store.sqlite import ActiveIndex, SqliteStore, chunk_id_for
 from test_chroma_factory import FakeClient
 from test_cli_parse import invoke
 from test_ollama_client import EMBED, FakeOllama
-from test_sqlite_store import DOC, make_chunk, make_document
+from test_sqlite_store import DOC, DOC_B, make_chunk, make_document
 
 SECRET_CHUNK = "ZXQ-SECRET-CHUNK"
 SECRET_QUESTION = "ZXQ-SECRET-QUESTION"
@@ -76,6 +76,7 @@ def write_rag(
     max_question: int = 512,
     k: int = 5,
     hybrid: bool | None = None,
+    neighbors: bool | None = None,
 ) -> Config:
     path = directory / "rag.toml"
     path.write_text(
@@ -96,6 +97,11 @@ def write_rag(
                 f"max_cosine_distance = {max_distance}",
                 f"max_question_tokens = {max_question}",
                 *([] if hybrid is None else [f"hybrid = {'true' if hybrid else 'false'}"]),
+                *(
+                    []
+                    if neighbors is None
+                    else [f"neighbors = {'true' if neighbors else 'false'}"]
+                ),
                 "[limits]",
                 f"min_free_bytes = {min_free}",
                 "",
@@ -146,8 +152,10 @@ class Corpus:
             if rows and store.get_document(DOC) is None:
                 store.insert_document(make_document())
             records: list[IndexRecord] = []
-            for ordinal, row in enumerate(rows):
+            for position, row in enumerate(rows):
+                ordinal = position if "ordinal" not in row else int(row["ordinal"])
                 page = int(row.get("page", -1))
+                anchor = row.get("anchor_ordinal")
                 chunk = make_chunk(
                     ordinal=ordinal,
                     text=row["text"],
@@ -155,6 +163,9 @@ class Corpus:
                     kind=row.get("kind", "text"),
                     page_start=None if page < 1 else page,
                     page_end=None if page < 1 else page,
+                    anchor_chunk_id=(
+                        None if anchor is None else chunk_id_for(DOC, int(anchor))
+                    ),
                 )
                 store.insert_chunk(chunk)
                 records.append(
@@ -166,7 +177,7 @@ class Corpus:
                         source_path=f"/docs/{DOC}.pdf",
                         filename=row.get("filename", "退款規定.pdf"),
                         kind=row.get("kind", "text"),
-                        ordinal=ordinal,
+                        ordinal=chunk.ordinal,
                         page_start=-1 if page < 1 else page,
                         page_end=-1 if page < 1 else page,
                     )
@@ -975,7 +986,9 @@ def test_hybrid_keeps_a_tied_vector_hit_ahead_of_pure_fts(tmp_path, capsys):
     previous = logger.level
     logger.setLevel(logging.INFO)
     try:
-        code = corpus.ask(AMOUNT_QUESTION, show_chunks=True, as_json=True)
+        code = corpus.ask(
+            AMOUNT_QUESTION, show_chunks=True, as_json=True, neighbors=False
+        )
     finally:
         logger.setLevel(previous)
     captured = capsys.readouterr()
@@ -1026,7 +1039,7 @@ def test_no_hybrid_keeps_the_vector_hits(tmp_path, monkeypatch):
     corpus = Corpus(tmp_path, k=2)
     seed_vector_pair_and_fts(corpus)
     calls = watch_fts(monkeypatch)
-    assert corpus.ask(AMOUNT_QUESTION, hybrid=False) == EXIT_OK
+    assert corpus.ask(AMOUNT_QUESTION, hybrid=False, neighbors=False) == EXIT_OK
     assert calls == []
     content = user_text(corpus.fake)
     assert "甲段" in content
@@ -1039,11 +1052,11 @@ def test_config_hybrid_false_stays_vector_only_until_overridden(tmp_path, monkey
     seed_vector_pair_and_fts(corpus)
     calls = watch_fts(monkeypatch)
     assert corpus.config.hybrid is False
-    assert corpus.ask(AMOUNT_QUESTION) == EXIT_OK
+    assert corpus.ask(AMOUNT_QUESTION, neighbors=False) == EXIT_OK
     assert calls == []
     assert FTS_BODY not in user_text(corpus.fake)
     corpus.fake.seen.clear()
-    assert corpus.ask(AMOUNT_QUESTION, hybrid=True) == EXIT_OK
+    assert corpus.ask(AMOUNT_QUESTION, hybrid=True, neighbors=False) == EXIT_OK
     assert calls == [('"100"', 2)]
     assert FTS_BODY in user_text(corpus.fake)
     assert "乙段" not in user_text(corpus.fake)
@@ -1053,7 +1066,7 @@ def test_fts_operational_error_keeps_vector_order(tmp_path, monkeypatch):
     corpus = Corpus(tmp_path, k=2)
     seed_vector_pair_and_fts(corpus)
     monkeypatch.setattr("ragcli.ask.fts_match_query", lambda _question: "1,200")
-    assert corpus.ask(AMOUNT_QUESTION) == EXIT_OK
+    assert corpus.ask(AMOUNT_QUESTION, neighbors=False) == EXIT_OK
     content = user_text(corpus.fake)
     assert "甲段" in content
     assert "乙段" in content
@@ -1095,7 +1108,7 @@ def test_cli_no_hybrid_and_hybrid_override(monkeypatch, tmp_path):
     monkeypatch.setattr(ChromaIndex, "open", classmethod(open_shared))
     off = invoke(
         monkeypatch,
-        ["ask", "--k", "2", "--no-hybrid", AMOUNT_QUESTION],
+        ["ask", "--k", "2", "--no-hybrid", "--no-neighbors", AMOUNT_QUESTION],
         cwd=tmp_path,
     )
     assert off[0] == EXIT_OK
@@ -1103,7 +1116,7 @@ def test_cli_no_hybrid_and_hybrid_override(monkeypatch, tmp_path):
     assert "乙段" in chats(corpus.fake)[0]["messages"][1]["content"]
     on = invoke(
         monkeypatch,
-        ["ask", "--k", "2", AMOUNT_QUESTION],
+        ["ask", "--k", "2", "--no-neighbors", AMOUNT_QUESTION],
         cwd=tmp_path,
     )
     assert on[0] == EXIT_OK
@@ -1120,3 +1133,369 @@ def t_hybrid(vector_count: int, fts_count: int, merged_count: int) -> str:
         fts_count=fts_count,
         merged_count=merged_count,
     )
+
+
+def t_neighbors(count: int) -> str:
+    from ragcli.i18n import t
+
+    return t("log.neighbors", count=count)
+
+
+def insert_done(corpus: Corpus, **overrides) -> None:
+    doc_id = str(overrides.get("doc_id", DOC))
+    store = SqliteStore.open(corpus.config.data_dir)
+    try:
+        if store.get_document(doc_id) is None:
+            store.insert_document(
+                make_document(doc_id, source_path=f"/docs/{doc_id}.pdf")
+            )
+        store.insert_chunk(make_chunk(**overrides))
+    finally:
+        store.close()
+
+
+def watch_ordinals(monkeypatch):
+    calls = []
+    real = SqliteStore.chunks_by_ordinals
+
+    def wrapped(self, doc_id, ordinals):
+        calls.append((doc_id, tuple(ordinals)))
+        return real(self, doc_id, ordinals)
+
+    monkeypatch.setattr(SqliteStore, "chunks_by_ordinals", wrapped)
+    return calls
+
+
+def test_neighbors_follow_direct_hits_and_skip_the_anchor(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=1)
+    insert_done(corpus, ordinal=0, text="ANCHOR-FAR", embed_state="done", page_start=1, page_end=1)
+    corpus.seed(
+        [
+            {
+                "ordinal": 2,
+                "text": "FIG-BODY",
+                "distance": 0.15,
+                "page": 4,
+                "kind": "figure",
+                "anchor_ordinal": 0,
+            }
+        ]
+    )
+    insert_done(
+        corpus,
+        ordinal=1,
+        text="LEFT-PAGE",
+        embed_state="done",
+        kind="text",
+        page_start=2,
+        page_end=2,
+    )
+    insert_done(
+        corpus,
+        ordinal=3,
+        text="RIGHT-OCR",
+        embed_state="done",
+        kind="ocr",
+        page_start=None,
+        page_end=None,
+    )
+    insert_done(
+        corpus,
+        doc_id=DOC_B,
+        ordinal=1,
+        text="OTHER-DOC",
+        embed_state="done",
+    )
+    insert_done(
+        corpus,
+        doc_id=DOC_B,
+        ordinal=3,
+        text="OTHER-RIGHT",
+        embed_state="done",
+    )
+    logger = logging.getLogger("ragcli")
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+        code = corpus.ask("相鄰", show_chunks=True, as_json=True)
+    finally:
+        logger.setLevel(previous)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    content = user_text(corpus.fake)
+    assert content.index("FIG-BODY") < content.index("LEFT-PAGE") < content.index("RIGHT-OCR")
+    for absent in ("ANCHOR-FAR", "OTHER-DOC", "OTHER-RIGHT"):
+        assert absent not in content
+        assert absent not in captured.err
+    payload = json.loads(captured.out)
+    assert [item["origin"] for item in payload["sources"]] == [
+        "vector",
+        "neighbor",
+        "neighbor",
+    ]
+    assert [item["distance"] for item in payload["sources"]] == [0.15, 0.15, 0.15]
+    assert [item["page"] for item in payload["sources"]] == [4, 2, None]
+    assert [item["kind"] for item in payload["sources"]] == ["figure", "text", "ocr"]
+    assert [item["chunk_id"] for item in payload["sources"]] == [
+        chunk_id_for(DOC, 2),
+        chunk_id_for(DOC, 1),
+        chunk_id_for(DOC, 3),
+    ]
+    neighbor_lines = [line for line in captured.err.splitlines() if "origin=neighbor" in line]
+    assert len(neighbor_lines) == 2
+    assert "distance=0.150000" in neighbor_lines[0]
+    assert "page=2" in neighbor_lines[0]
+    assert "distance=0.150000" in neighbor_lines[1]
+    assert "page=" not in neighbor_lines[1]
+    assert "kind=ocr" in neighbor_lines[1]
+    assert chunk_id_for(DOC, 0) not in captured.err
+    logged = log_text(corpus.config)
+    assert t_neighbors(2) in logged
+    for secret in ("FIG-BODY", "LEFT-PAGE", "RIGHT-OCR", "ANCHOR-FAR", "相鄰"):
+        assert secret not in logged
+    assert latest_run(corpus.config).chunk_count == 3
+
+
+def test_neighbor_show_chunks_page_follows_zh(tmp_path, capsys):
+    set_language("zh")
+    corpus = Corpus(tmp_path, k=1)
+    corpus.seed([{"text": "DIRECT-HIT", "distance": 0.2, "page": 3}])
+    insert_done(
+        corpus,
+        ordinal=1,
+        text="SIDE-HIT",
+        embed_state="done",
+        page_start=8,
+        page_end=8,
+    )
+    assert corpus.ask("相鄰", show_chunks=True) == EXIT_OK
+    lines = [line for line in capsys.readouterr().err.splitlines() if "origin=neighbor" in line]
+    assert len(lines) == 1
+    assert "頁=8" in lines[0]
+    assert "distance=0.200000" in lines[0]
+    assert "page=" not in lines[0]
+
+
+def test_no_neighbors_and_config_override(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=1, neighbors=False)
+    corpus.seed([{"text": "DIRECT-HIT", "distance": 0.2}])
+    insert_done(corpus, ordinal=1, text="SIDE-HIT", embed_state="done")
+    calls = watch_ordinals(monkeypatch)
+    assert corpus.config.neighbors is False
+    assert corpus.ask("相鄰") == EXIT_OK
+    assert calls == []
+    assert "SIDE-HIT" not in user_text(corpus.fake)
+    corpus.fake.seen.clear()
+    assert corpus.ask("相鄰", neighbors=True) == EXIT_OK
+    assert calls == [(DOC, (1,))]
+    content = user_text(corpus.fake)
+    assert content.index("DIRECT-HIT") < content.index("SIDE-HIT")
+
+
+def test_direct_hits_are_not_repeated_as_neighbors(tmp_path):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"text": "ONE-HIT", "distance": 0.2},
+            {"text": "TWO-HIT", "distance": 0.3},
+        ]
+    )
+    assert corpus.ask("相鄰") == EXIT_OK
+    content = user_text(corpus.fake)
+    assert content.count("ONE-HIT") == 1
+    assert content.count("TWO-HIT") == 1
+
+
+def test_shared_neighbor_keeps_the_earlier_parent_distance(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed(
+        [
+            {"ordinal": 0, "text": "LATE-HIT", "distance": 0.4, "page": 2},
+            {"ordinal": 2, "text": "EARLY-HIT", "distance": 0.1, "page": 6},
+        ]
+    )
+    insert_done(
+        corpus,
+        ordinal=1,
+        text="SHARED-SIDE",
+        embed_state="done",
+        page_start=5,
+        page_end=5,
+    )
+    code = corpus.ask("相鄰", as_json=True)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    payload = json.loads(captured.out)
+    assert [item["chunk_id"] for item in payload["sources"]] == [
+        chunk_id_for(DOC, 2),
+        chunk_id_for(DOC, 0),
+        chunk_id_for(DOC, 1),
+    ]
+    assert payload["sources"][2]["origin"] == "neighbor"
+    assert payload["sources"][2]["distance"] == 0.1
+    assert payload["sources"][2]["page"] == 5
+    content = user_text(corpus.fake)
+    assert content.index("EARLY-HIT") < content.index("LATE-HIT") < content.index("SHARED-SIDE")
+    assert content.count("SHARED-SIDE") == 1
+
+
+def test_pure_fts_parent_gives_the_neighbor_no_distance(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "VEC-A", "distance": 0.2, "page": 3}])
+    insert_done(
+        corpus,
+        ordinal=1,
+        text=FTS_BODY,
+        embed_state="done",
+        page_start=4,
+        page_end=4,
+    )
+    insert_done(
+        corpus,
+        ordinal=2,
+        text="SIDE-OF-FTS",
+        embed_state="done",
+        page_start=8,
+        page_end=8,
+    )
+    code = corpus.ask(AMOUNT_QUESTION, show_chunks=True, as_json=True)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    payload = json.loads(captured.out)
+    assert [item["origin"] for item in payload["sources"]] == ["vector", "fts", "neighbor"]
+    assert [item["distance"] for item in payload["sources"]] == [0.2, None, None]
+    assert payload["sources"][2]["page"] == 8
+    assert payload["sources"][2]["chunk_id"] == chunk_id_for(DOC, 2)
+    neighbor_lines = [line for line in captured.err.splitlines() if "origin=neighbor" in line]
+    assert len(neighbor_lines) == 1
+    assert "distance=-" in neighbor_lines[0]
+    assert "distance=0" not in neighbor_lines[0]
+    assert "page=8" in neighbor_lines[0]
+    content = user_text(corpus.fake)
+    assert content.index("VEC-A") < content.index(FTS_BODY) < content.index("SIDE-OF-FTS")
+
+
+def test_neighbor_does_not_skip_a_direct_hit_that_does_not_fit(tmp_path):
+    question = "短問"
+    d1 = Excerpt(chunk_id_for(DOC, 0), "退款規定.pdf", 3, "text", "D1-NEAR", 0.1)
+    d2_text = "D2-" + ("乙" * 80)
+    d2 = Excerpt(chunk_id_for(DOC, 1), "退款規定.pdf", 4, "text", d2_text, 0.2)
+    n1 = Excerpt(chunk_id_for(DOC, 2), "退款規定.pdf", 5, "text", "N1-SHORT", None)
+    opening = estimate_tokens(format_excerpt(1, d1))
+    budget = opening + estimate_tokens(format_excerpt(2, n1))
+    assert opening + estimate_tokens(format_excerpt(2, d2)) > budget
+    num_ctx = (
+        budget
+        + estimate_tokens(system_prompt())
+        + estimate_tokens(question)
+        + 1
+        + 128
+    )
+    corpus = Corpus(tmp_path, num_ctx=num_ctx, num_predict=1)
+    corpus.seed(
+        [
+            {"text": d1.text, "distance": 0.1, "page": 3},
+            {"text": d2.text, "distance": 0.2, "page": 4},
+        ]
+    )
+    insert_done(
+        corpus,
+        ordinal=2,
+        text=n1.text,
+        embed_state="done",
+        page_start=5,
+        page_end=5,
+    )
+    assert corpus.ask(question) == EXIT_OK
+    content = user_text(corpus.fake)
+    assert d1.text in content
+    assert d2.text not in content
+    assert n1.text not in content
+    assert latest_run(corpus.config).chunk_count == 1
+
+
+def test_unfit_direct_hit_does_not_send_the_neighbor(tmp_path):
+    corpus = Corpus(tmp_path, num_ctx=64, num_predict=1)
+    corpus.seed([{"text": "BLOCK-SHOULD-NOT-BE-SENT", "distance": 0.1}])
+    insert_done(corpus, ordinal=1, text="N1-SHOULD-NOT-REPLACE", embed_state="done")
+    question = "完整的問題"
+    caught = expect(lambda: corpus.ask(question), EXIT_QUESTION, "partial prompt")
+    assert "N1-SHOULD-NOT-REPLACE" not in caught.message
+    bodies = json.dumps(corpus.fake.seen, ensure_ascii=False)
+    assert "BLOCK-SHOULD-NOT-BE-SENT" not in bodies
+    assert "N1-SHOULD-NOT-REPLACE" not in bodies
+    assert chats(corpus.fake) == []
+
+
+def test_distance_gate_does_not_expand_neighbors(tmp_path, monkeypatch, capsys):
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": "GATE-HIT", "distance": 0.9, "page": 3}])
+    insert_done(corpus, ordinal=1, text="NEIGHBOR-LEAK", embed_state="done", page_start=4, page_end=4)
+    calls = watch_ordinals(monkeypatch)
+    fts_calls = watch_fts(monkeypatch)
+    code = corpus.ask("相鄰", show_chunks=True)
+    err = capsys.readouterr().err
+    assert code == EXIT_OK
+    assert calls == []
+    assert fts_calls == []
+    assert chats(corpus.fake) == []
+    assert "origin=vector" in err
+    assert "distance=0.900000" in err
+    assert "origin=neighbor" not in err
+    assert "NEIGHBOR-LEAK" not in err
+
+
+def test_cli_neighbors_override_the_config(monkeypatch, tmp_path):
+    corpus = Corpus(tmp_path, k=1, neighbors=False)
+    corpus.seed([{"text": "DIRECT-HIT", "distance": 0.2}])
+    insert_done(corpus, ordinal=1, text="SIDE-HIT", embed_state="done")
+    default_dir = tmp_path / "default"
+    default_dir.mkdir()
+    default = Corpus(default_dir, k=1)
+    default.seed([{"text": "DIRECT-HIT", "distance": 0.2}])
+    insert_done(default, ordinal=1, text="SIDE-HIT", embed_state="done")
+    monkeypatch.setattr(
+        "ragcli.ask.OllamaClient", lambda *_args, **_kwargs: corpus.fake.client()
+    )
+    monkeypatch.setattr("ragcli.ask.available_bytes", lambda: PLENTY)
+    original = ChromaIndex.open.__func__
+
+    def open_shared(cls, data_dir, client_factory=None):
+        return original(cls, data_dir, client_factory=corpus.factory)
+
+    monkeypatch.setattr(ChromaIndex, "open", classmethod(open_shared))
+    off = invoke(monkeypatch, ["ask", "--k", "1", "相鄰"], cwd=tmp_path)
+    assert off[0] == EXIT_OK
+    assert "SIDE-HIT" not in chats(corpus.fake)[0]["messages"][1]["content"]
+    on = invoke(
+        monkeypatch,
+        ["ask", "--k", "1", "--neighbors", "相鄰"],
+        cwd=tmp_path,
+    )
+    assert on[0] == EXIT_OK
+    turned_on = chats(corpus.fake)[1]["messages"][1]["content"]
+    assert "DIRECT-HIT" in turned_on
+    assert turned_on.index("DIRECT-HIT") < turned_on.index("SIDE-HIT")
+    monkeypatch.setattr(
+        "ragcli.ask.OllamaClient", lambda *_args, **_kwargs: default.fake.client()
+    )
+
+    def open_default(cls, data_dir, client_factory=None):
+        return original(cls, data_dir, client_factory=default.factory)
+
+    monkeypatch.setattr(ChromaIndex, "open", classmethod(open_default))
+    hidden = invoke(
+        monkeypatch,
+        [
+            "--config",
+            str(default_dir / "rag.toml"),
+            "ask",
+            "--k",
+            "1",
+            "--no-neighbors",
+            "相鄰",
+        ],
+        cwd=default_dir,
+    )
+    assert hidden[0] == EXIT_OK
+    assert "SIDE-HIT" not in chats(default.fake)[0]["messages"][1]["content"]

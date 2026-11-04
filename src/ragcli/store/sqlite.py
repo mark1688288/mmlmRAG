@@ -657,6 +657,31 @@ class SqliteStore:
         ).fetchall()
         return [_chunk_from_row(row) for row in rows]
 
+    def chunks_by_ordinals(self, doc_id: str, ordinals: Sequence[int]) -> list[Chunk]:
+        """Return done chunks of this document at these ordinals.
+
+        Missing ordinals are omitted. Rows are ordered by ordinal. This does
+        not read ``anchor_chunk_id`` and does not look at other documents.
+        """
+        _require_doc_id(doc_id)
+        numbers: list[int] = []
+        seen: set[int] = set()
+        for ordinal in ordinals:
+            number = _require_small_int(ordinal, "ordinal", maximum=999_999)
+            if number in seen:
+                continue
+            seen.add(number)
+            numbers.append(number)
+        if not numbers:
+            return []
+        marks = ", ".join("?" for _ in numbers)
+        rows = self._connection().execute(
+            "SELECT * FROM chunks WHERE doc_id = ? AND embed_state = 'done' "
+            f"AND ordinal IN ({marks}) ORDER BY ordinal",
+            (doc_id, *numbers),
+        ).fetchall()
+        return [_chunk_from_row(row) for row in rows]
+
     def chunk_ids_for(self, doc_id: str) -> list[str]:
         """Return chunk ids in reading order. Does not delete anything."""
         self._require_document(doc_id)
