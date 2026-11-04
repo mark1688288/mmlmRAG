@@ -190,6 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_globals(ask, root=False)
     ask.add_argument("question", nargs="?", help=t("help.ask.question"))
     ask.add_argument("--k", type=_k_value, help=t("help.ask.k"))
+    ask.add_argument("--hybrid", action="store_true", help=t("help.ask.hybrid"))
+    ask.add_argument("--no-hybrid", action="store_true", help=t("help.ask.no_hybrid"))
     ask.add_argument("--model", help=t("help.ask.model"))
     ask.add_argument(
         "--no-fallback", action="store_true", help=t("help.ask.no_fallback")
@@ -419,6 +421,18 @@ def _require_ingest_file(raw: str) -> None:
 
 
 def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
+    if bool(args.hybrid) and bool(args.no_hybrid):
+        raise RagError(
+            EXIT_USAGE,
+            t("usage.flag_conflict", on="--hybrid", off="--no-hybrid"),
+        )
+    hybrid: bool | None
+    if args.hybrid:
+        hybrid = True
+    elif args.no_hybrid:
+        hybrid = False
+    else:
+        hybrid = None
     return run_ask(
         config,
         _question_text(args.question),
@@ -427,6 +441,7 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         allow_fallback=not bool(args.no_fallback),
         show_chunks=bool(args.show_chunks),
         as_json=bool(args.json),
+        hybrid=hybrid,
         lock_timeout=_lock_timeout(args),
     )
 

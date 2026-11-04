@@ -75,6 +75,7 @@ def write_rag(
     max_distance: float = 0.85,
     max_question: int = 512,
     k: int = 5,
+    hybrid: bool | None = None,
 ) -> Config:
     path = directory / "rag.toml"
     path.write_text(
@@ -94,6 +95,7 @@ def write_rag(
                 f"k = {k}",
                 f"max_cosine_distance = {max_distance}",
                 f"max_question_tokens = {max_question}",
+                *([] if hybrid is None else [f"hybrid = {'true' if hybrid else 'false'}"]),
                 "[limits]",
                 f"min_free_bytes = {min_free}",
                 "",
@@ -476,6 +478,8 @@ def test_distance_gate_refuses_without_a_generator(tmp_path, capsys):
         assert token not in out.err
     assert "chunk_id=" in out.err
     assert "distance=0.900000" in out.err
+    assert "origin=vector" in out.err
+    assert "distance=-" not in out.err
     assert chats(corpus.fake) == []
     assert query_embeds(corpus.fake)[0]["options"]["num_ctx"] == 1024
     assert corpus.fake.loaded == []
@@ -588,6 +592,7 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
             "page": None,
             "distance": 0.25,
             "kind": "text",
+            "origin": "vector",
         }
     ]
     assert SECRET_CHUNK not in captured.out
@@ -595,6 +600,8 @@ def test_answer_uses_raw_vectors_and_the_chat_contract(tmp_path, capsys):
     assert SECRET_QUESTION not in captured.out
     assert SECRET_QUESTION not in captured.err
     assert "頁=" not in captured.err
+    assert "origin=vector" in captured.err
+    assert "distance=-" not in captured.err
     for token in ("source=", "來源=", "Question:", "Excerpts:", "問題：", "摘錄：", "種類="):
         assert token not in captured.err
     assert _PREFIX_WARNING not in captured.err
@@ -875,3 +882,241 @@ def test_cli_no_fallback_reaches_the_gate(monkeypatch, tmp_path):
     assert code == EXIT_RESOURCES
     assert "Did not switch to the fallback model." in err
     assert chats(corpus.fake) == []
+
+
+FTS_BODY = "根據第12條退款金額為100元。"
+AMOUNT_QUESTION = "金額是100元嗎"
+
+
+def watch_fts(monkeypatch):
+    calls = []
+    real = SqliteStore.search_fts
+
+    def wrapped(self, match, limit):
+        calls.append((match, limit))
+        return real(self, match, limit)
+
+    monkeypatch.setattr(SqliteStore, "search_fts", wrapped)
+    return calls
+
+
+def seed_vector_pair_and_fts(corpus: Corpus) -> None:
+    corpus.seed(
+        [
+            {"text": "甲段", "distance": 0.2, "page": 3},
+            {"text": "乙段", "distance": 0.4, "page": 2},
+        ]
+    )
+    store = SqliteStore.open(corpus.config.data_dir)
+    try:
+        store.insert_chunk(
+            make_chunk(
+                ordinal=2,
+                text=FTS_BODY,
+                embed_state="done",
+                page_start=4,
+                page_end=4,
+            )
+        )
+    finally:
+        store.close()
+
+
+def user_text(fake) -> str:
+    return chats(fake)[0]["messages"][1]["content"]
+
+
+def test_distance_gate_does_not_query_fts(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": "甲段", "distance": 0.9, "page": 3}])
+    seed_store = SqliteStore.open(corpus.config.data_dir)
+    try:
+        seed_store.insert_chunk(
+            make_chunk(
+                ordinal=1,
+                text=FTS_BODY,
+                embed_state="done",
+                page_start=4,
+                page_end=4,
+            )
+        )
+    finally:
+        seed_store.close()
+    calls = watch_fts(monkeypatch)
+    code = corpus.ask(AMOUNT_QUESTION, show_chunks=True)
+    assert code == EXIT_OK
+    assert calls == []
+    assert chats(corpus.fake) == []
+    assert FTS_BODY not in log_text(corpus.config)
+
+
+def test_open_gate_queries_fts_with_k_as_the_limit(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=2)
+    corpus.seed([{"text": "甲段", "distance": 0.85}])
+    calls = watch_fts(monkeypatch)
+    assert corpus.ask(AMOUNT_QUESTION) == EXIT_OK
+    assert calls == [('"100"', 2)]
+    assert len(chats(corpus.fake)) == 1
+
+
+def test_question_without_a_protected_span_skips_fts(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": "甲段", "distance": 0.2}])
+    calls = watch_fts(monkeypatch)
+    assert corpus.ask("退款") == EXIT_OK
+    assert calls == []
+    assert len(chats(corpus.fake)) == 1
+
+
+def test_hybrid_keeps_a_tied_vector_hit_ahead_of_pure_fts(tmp_path, capsys):
+    corpus = Corpus(tmp_path, k=2)
+    seed_vector_pair_and_fts(corpus)
+    logger = logging.getLogger("ragcli")
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+        code = corpus.ask(AMOUNT_QUESTION, show_chunks=True, as_json=True)
+    finally:
+        logger.setLevel(previous)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    content = user_text(corpus.fake)
+    assert "甲段" in content
+    assert FTS_BODY in content
+    assert "乙段" not in content
+    payload = json.loads(captured.out)
+    assert [item["origin"] for item in payload["sources"]] == ["vector", "fts"]
+    assert payload["sources"][0]["distance"] == 0.2
+    assert payload["sources"][1]["distance"] is None
+    assert payload["sources"][1]["page"] == 4
+    fts_lines = [line for line in captured.err.splitlines() if "origin=fts" in line]
+    assert fts_lines == [
+        line
+        for line in fts_lines
+        if "distance=-" in line and "distance=0" not in line and "distance=2" not in line
+    ]
+    assert len(fts_lines) == 1
+    assert "page=4" in fts_lines[0]
+    assert "origin=vector" in captured.err
+    assert "乙段" not in captured.err
+    assert chunk_id_for(DOC, 1) not in captured.err
+    logged = log_text(corpus.config)
+    assert t_hybrid(2, 1, 2) in logged
+    assert AMOUNT_QUESTION not in logged
+    assert FTS_BODY not in logged
+    assert '"100"' not in logged
+    query = corpus._chroma.collections[next(iter(corpus._chroma.collections))].queries[0]
+    assert query["n_results"] == 2
+
+
+def test_hybrid_show_chunks_dash_follows_zh(tmp_path, capsys):
+    set_language("zh")
+    corpus = Corpus(tmp_path, k=2)
+    seed_vector_pair_and_fts(corpus)
+    assert corpus.ask(AMOUNT_QUESTION, show_chunks=True) == EXIT_OK
+    err = capsys.readouterr().err
+    fts_lines = [line for line in err.splitlines() if "origin=fts" in line]
+    assert len(fts_lines) == 1
+    assert "distance=-" in fts_lines[0]
+    assert "頁=4" in fts_lines[0]
+    assert "origin=fts" in fts_lines[0]
+
+
+def test_no_hybrid_keeps_the_vector_hits(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=2)
+    seed_vector_pair_and_fts(corpus)
+    calls = watch_fts(monkeypatch)
+    assert corpus.ask(AMOUNT_QUESTION, hybrid=False) == EXIT_OK
+    assert calls == []
+    content = user_text(corpus.fake)
+    assert "甲段" in content
+    assert "乙段" in content
+    assert FTS_BODY not in content
+
+
+def test_config_hybrid_false_stays_vector_only_until_overridden(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=2, hybrid=False)
+    seed_vector_pair_and_fts(corpus)
+    calls = watch_fts(monkeypatch)
+    assert corpus.config.hybrid is False
+    assert corpus.ask(AMOUNT_QUESTION) == EXIT_OK
+    assert calls == []
+    assert FTS_BODY not in user_text(corpus.fake)
+    corpus.fake.seen.clear()
+    assert corpus.ask(AMOUNT_QUESTION, hybrid=True) == EXIT_OK
+    assert calls == [('"100"', 2)]
+    assert FTS_BODY in user_text(corpus.fake)
+    assert "乙段" not in user_text(corpus.fake)
+
+
+def test_fts_operational_error_keeps_vector_order(tmp_path, monkeypatch):
+    corpus = Corpus(tmp_path, k=2)
+    seed_vector_pair_and_fts(corpus)
+    monkeypatch.setattr("ragcli.ask.fts_match_query", lambda _question: "1,200")
+    assert corpus.ask(AMOUNT_QUESTION) == EXIT_OK
+    content = user_text(corpus.fake)
+    assert "甲段" in content
+    assert "乙段" in content
+    assert FTS_BODY not in content
+    logged = log_text(corpus.config)
+    assert "Full-text search failed." in logged
+    assert AMOUNT_QUESTION not in logged
+    assert FTS_BODY not in logged
+    assert "1,200" not in logged
+
+
+def test_both_origin_keeps_the_vector_distance(tmp_path, capsys):
+    corpus = Corpus(tmp_path)
+    corpus.seed([{"text": FTS_BODY, "distance": 0.25, "page": 4}])
+    code = corpus.ask("請問第12條如何適用", show_chunks=True, as_json=True)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    payload = json.loads(captured.out)
+    assert payload["sources"][0]["origin"] == "both"
+    assert payload["sources"][0]["distance"] == 0.25
+    assert "distance=0.250000" in captured.err
+    assert "origin=both" in captured.err
+    assert "distance=-" not in captured.err
+    assert FTS_BODY in user_text(corpus.fake)
+
+
+def test_cli_no_hybrid_and_hybrid_override(monkeypatch, tmp_path):
+    corpus = Corpus(tmp_path, k=2)
+    seed_vector_pair_and_fts(corpus)
+    monkeypatch.setattr(
+        "ragcli.ask.OllamaClient", lambda *_args, **_kwargs: corpus.fake.client()
+    )
+    monkeypatch.setattr("ragcli.ask.available_bytes", lambda: PLENTY)
+    original = ChromaIndex.open.__func__
+
+    def open_shared(cls, data_dir, client_factory=None):
+        return original(cls, data_dir, client_factory=corpus.factory)
+
+    monkeypatch.setattr(ChromaIndex, "open", classmethod(open_shared))
+    off = invoke(
+        monkeypatch,
+        ["ask", "--k", "2", "--no-hybrid", AMOUNT_QUESTION],
+        cwd=tmp_path,
+    )
+    assert off[0] == EXIT_OK
+    assert FTS_BODY not in chats(corpus.fake)[0]["messages"][1]["content"]
+    assert "乙段" in chats(corpus.fake)[0]["messages"][1]["content"]
+    on = invoke(
+        monkeypatch,
+        ["ask", "--k", "2", AMOUNT_QUESTION],
+        cwd=tmp_path,
+    )
+    assert on[0] == EXIT_OK
+    assert FTS_BODY in chats(corpus.fake)[1]["messages"][1]["content"]
+    assert "乙段" not in chats(corpus.fake)[1]["messages"][1]["content"]
+
+
+def t_hybrid(vector_count: int, fts_count: int, merged_count: int) -> str:
+    from ragcli.i18n import t
+
+    return t(
+        "log.hybrid",
+        vector_count=vector_count,
+        fts_count=fts_count,
+        merged_count=merged_count,
+    )

@@ -29,14 +29,22 @@ _SYSTEM_PROMPT = (
 
 @dataclass(frozen=True, slots=True)
 class Excerpt:
-    """One retrieved chunk placed into the user message."""
+    """One retrieved chunk placed into the user message.
+
+    ``distance`` is cosine distance, or ``None`` when the chunk has no
+    vector distance. ``origin`` is ``vector``, ``fts``, ``both``, or
+    ``neighbor``. ``format_excerpt`` does not print ``origin``.
+    """
 
     chunk_id: str
     filename: str
     page: int
     kind: str
     text: str
-    distance: float
+    distance: float | None
+    doc_id: str = ""
+    ordinal: int | None = None
+    origin: str = "vector"
 
 
 def refusal_sentence() -> str:

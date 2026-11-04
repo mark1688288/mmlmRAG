@@ -2,10 +2,10 @@
 
 The query string uses the Qwen3-Embedding instruction. Document text does
 not. ``Query:`` has no space before the question. Hits whose best cosine
-distance is above the configured gate never load a generator. Vector hits
-are ordered by distance and then packed in that order; a chunk that does
-not fit is left out whole, and if the first chunk does not fit the prompt
-is not sent.
+distance is above the configured gate never load a generator and do not
+query FTS. When hybrid retrieval is on, vector hits and FTS hits are
+merged with RRF and packed in that order. A chunk that does not fit is
+left out whole, and if the first chunk does not fit the prompt is not sent.
 """
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ from ragcli.prompt import (
     refusal_sentence,
     system_prompt,
 )
+from ragcli.retrieve import MergedHit, fts_match_query, rrf_merge
 from ragcli.store.chroma import ChromaIndex, QueryHit
 from ragcli.store.sqlite import Run, SqliteStore
 
@@ -165,6 +166,7 @@ def run_ask(
     allow_fallback: bool = True,
     show_chunks: bool = False,
     as_json: bool = False,
+    hybrid: bool | None = None,
     lock_timeout: float | None = None,
     client: OllamaClient | None = None,
     available: int | None = None,
@@ -177,6 +179,7 @@ def run_ask(
     if model is not None and not valid_model_name(model):
         raise RagError(EXIT_USAGE, t("model.name_invalid"))
     limit = _resolve_k(config, k)
+    use_hybrid = _resolve_hybrid(config, hybrid)
     _require_disk(config, free_bytes)
     with _session(config, clock, client_factory=client_factory) as (store, index, outcome):
         _execute(
@@ -190,6 +193,7 @@ def run_ask(
             allow_fallback=allow_fallback,
             show_chunks=show_chunks,
             as_json=as_json,
+            hybrid=use_hybrid,
             lock_timeout=lock_timeout,
             client=client,
             available=available,
@@ -209,6 +213,7 @@ def _execute(
     allow_fallback: bool,
     show_chunks: bool,
     as_json: bool,
+    hybrid: bool,
     lock_timeout: float | None,
     client: OllamaClient | None,
     available: int | None,
@@ -249,10 +254,9 @@ def _execute(
             n_results=k,
         )
         ordered = sorted(hits, key=lambda hit: hit.distance)
-        if show_chunks:
-            for hit in ordered:
-                print(_hit_line(hit), file=sys.stderr)
         if not ordered or ordered[0].distance > config.max_cosine_distance:
+            if show_chunks:
+                _print_hits([_excerpt(hit) for hit in ordered])
             logger.info("%s", t("log.no_close_hit"))
             _emit(
                 refusal_sentence(),
@@ -263,6 +267,9 @@ def _execute(
             )
             outcome.refused_count = 1
             return
+        selected = _select_hits(store, question, ordered, k=k, hybrid=hybrid)
+        if show_chunks:
+            _print_hits(selected)
         prompt = system_prompt()
         budget = retrieval_budget(
             num_ctx=config.generate_num_ctx,
@@ -270,7 +277,7 @@ def _execute(
             question=question,
             num_predict=config.num_predict,
         )
-        packed = pack_excerpts([_excerpt(hit) for hit in ordered], budget)
+        packed = pack_excerpts(selected, budget)
         content = _generate(
             config,
             ollama,
@@ -406,7 +413,49 @@ def _note_ollama(outcome: _Outcome, exc: RagError) -> None:
         outcome.ollama_error_count += 1
 
 
-def _excerpt(hit: QueryHit) -> Excerpt:
+def _select_hits(
+    store: SqliteStore,
+    question: str,
+    ordered: Sequence[QueryHit],
+    *,
+    k: int,
+    hybrid: bool,
+) -> list[Excerpt]:
+    """Return direct hits in pack order. A closed gate never reaches here."""
+    if not hybrid:
+        return [_excerpt(hit) for hit in ordered[:k]]
+    match = fts_match_query(question)
+    fts_ids: list[str] = []
+    if match is not None:
+        fts_ids = [chunk_id for chunk_id, _score in store.search_fts(match, k)]
+    merged = rrf_merge(
+        [(hit.chunk_id, hit.distance) for hit in ordered],
+        fts_ids,
+        k,
+    )
+    by_id = {hit.chunk_id: hit for hit in ordered}
+    selected: list[Excerpt] = []
+    for item in merged:
+        hit = by_id.get(item.chunk_id)
+        if hit is not None:
+            selected.append(_excerpt(hit, origin=item.origin))
+            continue
+        loaded = _fts_excerpt(store, item)
+        if loaded is not None:
+            selected.append(loaded)
+    logger.info(
+        "%s",
+        t(
+            "log.hybrid",
+            vector_count=len(ordered),
+            fts_count=len(fts_ids),
+            merged_count=len(selected),
+        ),
+    )
+    return selected
+
+
+def _excerpt(hit: QueryHit, *, origin: str = "vector") -> Excerpt:
     return Excerpt(
         chunk_id=hit.chunk_id,
         filename=hit.filename,
@@ -414,20 +463,51 @@ def _excerpt(hit: QueryHit) -> Excerpt:
         kind=hit.kind,
         text=hit.text,
         distance=hit.distance,
+        doc_id=hit.doc_id,
+        ordinal=hit.ordinal,
+        origin=origin,
     )
 
 
-def _hit_line(hit: QueryHit) -> str:
-    distance = f"{hit.distance:.6f}"
-    page = t("status.hit.page", page=hit.page_start) if hit.page_start >= 1 else ""
-    return t(
-        "status.hit",
-        chunk_id=hit.chunk_id,
-        filename=hit.filename,
+def _fts_excerpt(store: SqliteStore, item: MergedHit) -> Excerpt | None:
+    chunk = store.get_chunk(item.chunk_id)
+    if chunk is None:
+        return None
+    document = store.get_document(chunk.doc_id)
+    page = -1 if chunk.page_start is None else chunk.page_start
+    return Excerpt(
+        chunk_id=chunk.chunk_id,
+        filename="" if document is None else document.filename,
         page=page,
-        distance=distance,
-        kind=hit.kind,
+        kind=chunk.kind,
+        text=chunk.text,
+        distance=None,
+        doc_id=chunk.doc_id,
+        ordinal=chunk.ordinal,
+        origin=item.origin,
     )
+
+
+def _print_hits(items: Sequence[Excerpt]) -> None:
+    for item in items:
+        if item.distance is None:
+            distance = "-"
+        else:
+            distance = f"{item.distance:.6f}"
+        page = t("status.hit.page", page=item.page) if item.page >= 1 else ""
+        print(
+            t(
+                "status.hit",
+                chunk_id=item.chunk_id,
+                filename=item.filename,
+                page=page,
+                distance=distance,
+                kind=item.kind,
+            ),
+            t("status.hit.origin", origin=item.origin),
+            sep="",
+            file=sys.stderr,
+        )
 
 
 def _emit(
@@ -459,6 +539,7 @@ def _source(item: Excerpt) -> dict[str, object]:
         "page": None if item.page < 1 else item.page,
         "distance": item.distance,
         "kind": item.kind,
+        "origin": item.origin,
     }
 
 
@@ -475,6 +556,14 @@ def _clean_question(question: str) -> str:
     if text == "":
         raise RagError(EXIT_USAGE, t("ask.question_missing"))
     return text
+
+
+def _resolve_hybrid(config: Config, hybrid: bool | None) -> bool:
+    if hybrid is None:
+        return config.hybrid
+    if not isinstance(hybrid, bool):
+        raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.hybrid"))
+    return hybrid
 
 
 def _resolve_k(config: Config, k: int | None) -> int:

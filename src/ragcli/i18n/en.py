@@ -418,4 +418,13 @@ MESSAGES = {
     "log.schema_backup": "Schema backup {filename}.",
     "store.backup_failed": "Cannot back up the corpus database.",
     "log.fts_failed": "Full-text search failed.",
+    "help.ask.hybrid": "Turn hybrid retrieval on for this question",
+    "help.ask.no_hybrid": "Turn hybrid retrieval off for this question",
+    "log.hybrid": (
+        "Hybrid retrieval: {vector_count} vector hits, "
+        "{fts_count} full-text hits, {merged_count} merged."
+    ),
+    "config.retrieve_bool": "{label} must be a boolean.",
+    "usage.flag_conflict": "{on} and {off} cannot both be set.",
+    "status.hit.origin": " origin={origin}",
 }

@@ -370,4 +370,10 @@ MESSAGES = {
     "log.schema_backup": "綱要備份 {filename}。",
     "store.backup_failed": "無法備份語料庫。",
     "log.fts_failed": "全文檢索失敗。",
+    "help.ask.hybrid": "這次開啟混合檢索",
+    "help.ask.no_hybrid": "這次關閉混合檢索",
+    "log.hybrid": "混合檢索：向量 {vector_count}、全文 {fts_count}、合併 {merged_count}。",
+    "config.retrieve_bool": "{label} 必須是布林值。",
+    "usage.flag_conflict": "不可以同時指定 {on} 同 {off}。",
+    "status.hit.origin": " origin={origin}",
 }

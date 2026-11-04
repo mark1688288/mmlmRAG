@@ -166,6 +166,71 @@ def test_help_lists_commands_without_reading_config(monkeypatch, tmp_path):
         assert name in out
 
 
+def test_ask_help_lists_hybrid_flags(monkeypatch, tmp_path):
+    code, out, err = invoke(monkeypatch, ["ask", "--help"], cwd=tmp_path)
+    assert code == EXIT_OK
+    assert err == ""
+    assert "--hybrid" in out
+    assert "--no-hybrid" in out
+    assert "Turn hybrid retrieval on for this question" in flat(out)
+    assert "Turn hybrid retrieval off for this question" in flat(out)
+
+
+def test_hybrid_flags_cannot_both_be_set(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["ask", "--hybrid", "--no-hybrid", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "--hybrid and --no-hybrid cannot both be set." in err
+
+
+def test_hybrid_flag_conflict_follows_zh(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "zh", "ask", "--hybrid", "--no-hybrid", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "不可以同時指定 --hybrid 同 --no-hybrid。" in err
+    assert "cannot both be set" not in err
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[retrieve]\nhybrid = 1\n",
+        '[retrieve]\nhybrid = "yes"\n',
+    ],
+)
+def test_hybrid_must_be_a_boolean(monkeypatch, tmp_path, body):
+    write_config(tmp_path, body)
+    code, _out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert "retrieve.hybrid must be a boolean." in err
+
+
+def test_hybrid_false_is_shown(monkeypatch, tmp_path):
+    write_config(tmp_path, "[retrieve]\nhybrid = false\n")
+    code, out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    assert shown(out)["retrieve.hybrid"] == "false"
+
+
 def test_ingest_help_lists_flags(monkeypatch, tmp_path):
     code, out, _err = invoke(monkeypatch, ["ingest", "--help"], cwd=tmp_path)
     assert code == EXIT_OK
@@ -216,6 +281,7 @@ def test_repo_config_show_matches_design(monkeypatch, tmp_path):
         "retrieve.k": "5",
         "retrieve.max_cosine_distance": "0.85",
         "retrieve.max_question_tokens": "512",
+        "retrieve.hybrid": "true",
         "chunk.target_tokens": "480",
         "chunk.max_tokens": "640",
         "chunk.overlap_tokens": "80",
@@ -1314,7 +1380,9 @@ def test_help_text_is_translated_inside_parser_builders():
         for message_id in by_function[name]
         if message_id.startswith("help.")
     ]
-    assert len(help_calls) == 46
+    assert len(help_calls) == 48
+    assert help_calls.count("help.ask.hybrid") == 1
+    assert help_calls.count("help.ask.no_hybrid") == 1
     assert help_calls.count("help.metavar.action") == 2
     assert "help.lang" in by_function["_add_globals"]
     assert by_function["_CatalogHelpFormatter._format_usage"] == ["help.usage_prefix"]

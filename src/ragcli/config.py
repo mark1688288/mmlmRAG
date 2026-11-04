@@ -38,7 +38,9 @@ _SECTIONS: dict[str, frozenset[str]] = {
             "vision_temperature",
         }
     ),
-    "retrieve": frozenset({"k", "max_cosine_distance", "max_question_tokens"}),
+    "retrieve": frozenset(
+        {"k", "max_cosine_distance", "max_question_tokens", "hybrid"}
+    ),
     "chunk": frozenset({"target_tokens", "max_tokens", "overlap_tokens"}),
     "ocr": frozenset(
         {"languages", "recognition_level", "confidence_threshold", "rich_tokens"}
@@ -80,6 +82,7 @@ class Config:
     k: int
     max_cosine_distance: float
     max_question_tokens: int
+    hybrid: bool
     chunk_target_tokens: int
     chunk_max_tokens: int
     chunk_overlap_tokens: int
@@ -188,6 +191,7 @@ def load_config(
             "retrieve.max_question_tokens",
             minimum=1,
         ),
+        hybrid=_bool(retrieve, "hybrid", True, "retrieve.hybrid"),
         chunk_target_tokens=_int(
             chunk, "target_tokens", 480, "chunk.target_tokens", minimum=1
         ),
@@ -244,6 +248,7 @@ def format_config(config: Config) -> str:
         f"retrieve.k={config.k}",
         f"retrieve.max_cosine_distance={config.max_cosine_distance}",
         f"retrieve.max_question_tokens={config.max_question_tokens}",
+        f"retrieve.hybrid={'true' if config.hybrid else 'false'}",
         f"chunk.target_tokens={config.chunk_target_tokens}",
         f"chunk.max_tokens={config.chunk_max_tokens}",
         f"chunk.overlap_tokens={config.chunk_overlap_tokens}",
@@ -434,6 +439,15 @@ def _int(table: dict, key: str, default: int, label: str, *, minimum: int) -> in
         raise RagError(
             EXIT_USAGE, t("config.minimum", label=label, minimum=minimum)
         )
+    return value
+
+
+def _bool(table: dict, key: str, default: bool, label: str) -> bool:
+    if key not in table:
+        return default
+    value = table[key]
+    if not isinstance(value, bool):
+        raise RagError(EXIT_USAGE, t("config.retrieve_bool", label=label))
     return value
 
 
