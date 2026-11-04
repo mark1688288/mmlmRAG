@@ -293,7 +293,7 @@ MESSAGES = {
     "store.run_finished_pair": "finished_at 與 exit_code 要同時有或同時沒有。",
     "store.run_missing": "找不到 run。",
     "store.run_open": "開始 runs 時尚未有結束時間或結束碼。",
-    "store.schema_refused": "SQLite 綱要不符合 schema_version=1。請從 data/ 備份還原，程式不會就地改寫。",
+    "store.schema_refused": "SQLite 綱要不符合這個版本的程式。無法辨識的綱要不會就地修復。請從 data/ 備份還原。",
     "store.sha256_doc_id": "sha256 必須等於 doc_id。",
     "store.status_parsed": "解析提交時 documents.status 必須是 parsed。",
     "store.storage_relpath": "storage_relpath 必須是 data/images 下的程式路徑。",
@@ -366,4 +366,8 @@ MESSAGES = {
     "prompt.excerpt.kind": " 種類=",
     "prompt.user.question": "問題：\n",
     "prompt.user.excerpts": "\n\n摘錄：\n",
+    "status.fts_mismatch": "FTS 列數 {fts_count} 與已嵌入 {done_count} 不一致。",
+    "log.schema_backup": "綱要備份 {filename}。",
+    "store.backup_failed": "無法備份語料庫。",
+    "log.fts_failed": "全文檢索失敗。",
 }

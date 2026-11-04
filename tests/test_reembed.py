@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -826,6 +827,30 @@ def test_status_reports_probe_counts_and_extra_ids(tmp_path, monkeypatch, capsys
     assert run.model_name is None
     assert run.ask_latency_ms is None
     assert run.refused_count == 0
+
+
+def test_status_prints_fts_mismatch_without_changing_the_exit_code(tmp_path, monkeypatch, capsys):
+    config = write_rag(tmp_path)
+    monkeypatch.setattr("ragcli.reembed.OllamaClient", refuse_ollama)
+    with opened(config) as store:
+        add_document(store)
+        chunk = add_chunk(store, DOC, 0, SECRET, embed_state="done")
+        add_vector(store, chunk)
+    assert run_reembed(config, clock=lambda: LATER) == EXIT_OK
+    connection = sqlite3.connect(config.data_dir / "corpus.sqlite")
+    connection.execute("DELETE FROM chunks_fts")
+    connection.commit()
+    connection.close()
+    fake = FakeOllama()
+    code = run_status(config, client=fake.client(), free_bytes=lambda: 10, clock=lambda: LATER)
+    captured = capsys.readouterr()
+    sentence = "FTS row count 0 does not match embedded chunks 1."
+    assert code == EXIT_OK
+    assert sentence in captured.out
+    log = (config.data_dir / "logs" / "rag.log").read_text(encoding="utf-8")
+    assert sentence in log
+    assert SECRET not in captured.out
+    assert SECRET not in log
 
 
 def test_status_ollama_down_is_exit_6_and_warns_on_wide_permissions(tmp_path, monkeypatch, capsys):

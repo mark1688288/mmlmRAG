@@ -6,12 +6,14 @@ module does not parse documents and does not call Ollama.
 
 New data directories are mode 0700. A database this process creates is mode
 0600. Existing paths keep the mode the user left them with. WAL sidecars are
-tightened to 0600 because SQLite recreates them. A schema newer than
-``schema_version`` 1 is refused and is not rewritten.
+tightened to 0600 because SQLite recreates them. A schema this build does not
+recognize is refused and is not repaired in place. A version 1 database is
+migrated to version 2 after writing ``corpus.sqlite.v1.bak``.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -22,12 +24,16 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from ragcli.errors import EXIT_MISMATCH, EXIT_NOT_FOUND, EXIT_UNCLASSIFIED, RagError
 from ragcli.i18n import t
 
-SCHEMA_VERSION = 1
+logger = logging.getLogger("ragcli.store.sqlite")
+
+SCHEMA_VERSION = 2
 DB_FILENAME = "corpus.sqlite"
+BACKUP_FILENAME = "corpus.sqlite.v1.bak"
 
 DOCUMENT_STATUSES = frozenset({"parsed", "complete"})
 EMBED_STATES = frozenset({"pending", "blocked", "done"})
@@ -261,6 +267,23 @@ CREATE INDEX images_status_idx ON images (status);
 CREATE INDEX documents_source_path_idx ON documents (source_path);
 CREATE INDEX vectors_embed_model_idx ON vectors (embed_model);
 """
+
+_FTS_TABLES = (
+    "chunks_fts",
+    "chunks_fts_config",
+    "chunks_fts_content",
+    "chunks_fts_data",
+    "chunks_fts_docsize",
+    "chunks_fts_idx",
+)
+
+_FTS_SCHEMA = (
+    "CREATE VIRTUAL TABLE chunks_fts USING fts5("
+    "chunk_id UNINDEXED, "
+    "text, "
+    'tokenize = "trigram case_sensitive 0"'
+    ")"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,29 +700,67 @@ class SqliteStore:
             raise RagError(EXIT_UNCLASSIFIED, t("store.text_type"))
         _require_small_int(token_estimate, "token_estimate", maximum=10_000_000, minimum=1)
         with self.transaction():
-            if self.get_chunk(chunk_id) is None:
+            current = self.get_chunk(chunk_id)
+            if current is None:
                 raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
             self._execute(
                 "UPDATE chunks SET text = ?, token_estimate = ? WHERE chunk_id = ?",
                 (text, token_estimate, chunk_id),
             )
+            if current.embed_state == "done":
+                self._replace_fts(chunk_id)
 
     def set_embed_state(self, chunk_id: str, embed_state: str) -> None:
         _choice(embed_state, EMBED_STATES, "embed_state")
         with self.transaction():
-            if self.get_chunk(chunk_id) is None:
+            current = self.get_chunk(chunk_id)
+            if current is None:
                 raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
             self._execute(
                 "UPDATE chunks SET embed_state = ? WHERE chunk_id = ?",
                 (embed_state, chunk_id),
             )
+            if embed_state == "done":
+                self._replace_fts(chunk_id)
+            elif current.embed_state == "done":
+                self._delete_fts(chunk_id)
 
     def delete_chunk(self, chunk_id: str) -> None:
         with self.transaction():
             if self.get_chunk(chunk_id) is None:
                 raise RagError(EXIT_NOT_FOUND, t("store.chunk_missing"))
+            self._delete_fts(chunk_id)
             self._execute("DELETE FROM vectors WHERE chunk_id = ?", (chunk_id,))
             self._execute("DELETE FROM chunks WHERE chunk_id = ?", (chunk_id,))
+
+    def search_fts(self, match: str, limit: int) -> list[tuple[str, float]]:
+        """Return ``(chunk_id, bm25)`` for done chunks, smallest score first.
+
+        A SQLite error is a warning and an empty list. No rows is not a warning.
+        """
+        bounded = _require_small_int(limit, "limit", maximum=1_000_000, minimum=1)
+        try:
+            rows = self._connection().execute(
+                """
+                SELECT chunks_fts.chunk_id, bm25(chunks_fts) AS score
+                FROM chunks_fts
+                JOIN chunks ON chunks.chunk_id = chunks_fts.chunk_id
+                WHERE chunks_fts MATCH ?
+                  AND chunks.embed_state = 'done'
+                ORDER BY score ASC
+                LIMIT ?
+                """,
+                (match, bounded),
+            ).fetchall()
+        except sqlite3.Error:
+            logger.warning("%s", t("log.fts_failed"))
+            return []
+        return [(str(row[0]), float(row[1])) for row in rows]
+
+    def count_fts_rows(self) -> int:
+        """Return the number of rows in the FTS index."""
+        row = self._connection().execute("SELECT COUNT(*) FROM chunks_fts").fetchone()
+        return int(row[0])
 
     def insert_image(self, image: ImageRecord) -> None:
         record = _validate_image(image)
@@ -1044,6 +1105,8 @@ class SqliteStore:
         tables = _table_names(conn)
         if not tables:
             self._create_schema()
+        elif _is_version_one(conn, tables):
+            self._migrate_from_version_one()
         else:
             _require_known_schema(conn)
         mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()
@@ -1060,14 +1123,76 @@ class SqliteStore:
         try:
             for statement in _sql_statements(_SCHEMA):
                 conn.execute(statement)
-            conn.execute(
-                "INSERT INTO schema_migrations (version) VALUES (?)", (SCHEMA_VERSION,)
-            )
+            conn.execute(_FTS_SCHEMA)
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (1)")
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (2)")
             conn.commit()
         except Exception:
             conn.rollback()
             raise
         _require_known_schema(conn)
+
+    def _migrate_from_version_one(self) -> None:
+        self._backup_version_one()
+        conn = self._connection()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(_FTS_SCHEMA)
+            conn.execute(
+                """
+                INSERT INTO chunks_fts (chunk_id, text)
+                SELECT chunk_id, text FROM chunks WHERE embed_state = 'done'
+                """
+            )
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (2)")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        _require_known_schema(conn)
+
+    def _backup_version_one(self) -> None:
+        backup_path = self.db_path.with_name(BACKUP_FILENAME)
+        if backup_path.is_symlink():
+            raise RagError(EXIT_MISMATCH, t("store.backup_failed"))
+        if backup_path.exists():
+            _require_existing_backup(backup_path)
+            return
+        self._write_backup(backup_path)
+        logger.info("%s", t("log.schema_backup", filename=BACKUP_FILENAME))
+
+    def _write_backup(self, backup_path: Path) -> None:
+        fd: int | None = None
+        dest: sqlite3.Connection | None = None
+        created = False
+        try:
+            fd = os.open(
+                backup_path,
+                os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
+                _PRIVATE_FILE,
+            )
+            created = True
+            os.close(fd)
+            fd = None
+            dest = sqlite3.connect(backup_path, isolation_level=None)
+            self._connection().backup(dest)
+            dest.close()
+            dest = None
+            os.chmod(backup_path, _PRIVATE_FILE)
+        except Exception as exc:
+            if dest is not None:
+                try:
+                    dest.close()
+                except sqlite3.Error:
+                    pass
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if created:
+                _remove_created_backup(backup_path)
+            raise RagError(EXIT_MISMATCH, t("store.backup_failed")) from exc
 
     def _remove_orphan_image_dirs(self) -> None:
         root = self.data_dir / "images"
@@ -1116,8 +1241,32 @@ class SqliteStore:
                 record.embed_state,
             ),
         )
+        if record.embed_state == "done":
+            self._replace_fts(record.chunk_id)
+
+    def _replace_fts(self, chunk_id: str) -> None:
+        self._delete_fts(chunk_id)
+        self._execute(
+            """
+            INSERT INTO chunks_fts (chunk_id, text)
+            SELECT chunk_id, text FROM chunks
+            WHERE chunk_id = ? AND embed_state = 'done'
+            """,
+            (chunk_id,),
+        )
+
+    def _delete_fts(self, chunk_id: str) -> None:
+        self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
 
     def _delete_child_rows(self, doc_id: str) -> None:
+        self._execute(
+            """
+            DELETE FROM chunks_fts WHERE chunk_id IN (
+                SELECT chunk_id FROM chunks WHERE doc_id = ?
+            )
+            """,
+            (doc_id,),
+        )
         self._execute(
             """
             DELETE FROM vectors WHERE chunk_id IN (
@@ -1175,16 +1324,29 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def _require_known_schema(conn: sqlite3.Connection) -> None:
-    tables = _table_names(conn)
-    expected = set(_TABLE_COLUMNS)
-    if tables != expected or "schema_migrations" not in tables:
-        raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
-    versions = [
+def _schema_versions(conn: sqlite3.Connection) -> list[int]:
+    return [
         int(row[0])
         for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
     ]
-    if versions != [SCHEMA_VERSION]:
+
+
+def _is_version_one(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    if tables != set(_TABLE_COLUMNS):
+        return False
+    try:
+        versions = _schema_versions(conn)
+    except sqlite3.Error:
+        return False
+    return versions == [1]
+
+
+def _require_known_schema(conn: sqlite3.Connection) -> None:
+    tables = _table_names(conn)
+    expected = set(_TABLE_COLUMNS) | set(_FTS_TABLES)
+    if tables != expected or "schema_migrations" not in tables:
+        raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
+    if _schema_versions(conn) != [1, 2]:
         raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
     for table, columns in _TABLE_COLUMNS.items():
         found = tuple(
@@ -1192,6 +1354,34 @@ def _require_known_schema(conn: sqlite3.Connection) -> None:
         )
         if found != columns:
             raise RagError(EXIT_MISMATCH, t("store.schema_refused"))
+
+
+def _require_existing_backup(path: Path) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise RagError(EXIT_MISMATCH, t("store.backup_failed"))
+    uri = "file:" + quote(path.as_posix(), safe="/") + "?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as exc:
+        raise RagError(EXIT_MISMATCH, t("store.backup_failed")) from exc
+    try:
+        try:
+            versions = _schema_versions(conn)
+            check = [str(row[0]) for row in conn.execute("PRAGMA integrity_check")]
+        except sqlite3.Error as exc:
+            raise RagError(EXIT_MISMATCH, t("store.backup_failed")) from exc
+    finally:
+        conn.close()
+    if versions != [1] or check != ["ok"]:
+        raise RagError(EXIT_MISMATCH, t("store.backup_failed"))
+
+
+def _remove_created_backup(path: Path) -> None:
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            Path(str(path) + suffix).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _private_root(data_dir: Path) -> Path:

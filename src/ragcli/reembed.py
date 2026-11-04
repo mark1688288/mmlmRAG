@@ -550,8 +550,16 @@ def _print_index(store: SqliteStore, index: ChromaIndex) -> None:
         print(t("status.index_extra", ids=" ".join(extra)))
     if missing:
         print(t("status.index_missing", ids=" ".join(missing)))
-    if count != store.count_chunks("done"):
+    done_count = store.count_chunks("done")
+    if count != done_count:
         print(t("status.count_mismatch"))
+    fts_count = store.count_fts_rows()
+    if fts_count != done_count:
+        print(t("status.fts_mismatch", fts_count=fts_count, done_count=done_count))
+        logger.warning(
+            "%s",
+            t("status.fts_mismatch", fts_count=fts_count, done_count=done_count),
+        )
 
 
 def _probe(

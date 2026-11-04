@@ -336,8 +336,9 @@ MESSAGES = {
     "store.run_missing": "Cannot find the run.",
     "store.run_open": "A run must not have a finish time or an exit code when it starts.",
     "store.schema_refused": (
-        "SQLite schema does not match schema_version=1. "
-        "Restore from a data/ backup, and the program will not rewrite it in place."
+        "SQLite schema does not match this build. "
+        "An unrecognized schema is not repaired. "
+        "Restore from a data/ backup."
     ),
     "store.sha256_doc_id": "sha256 must equal doc_id.",
     "store.status_parsed": "documents.status must be parsed when committing a parse.",
@@ -411,4 +412,10 @@ MESSAGES = {
     "prompt.excerpt.kind": " kind=",
     "prompt.user.question": "Question:\n",
     "prompt.user.excerpts": "\n\nExcerpts:\n",
+    "status.fts_mismatch": (
+        "FTS row count {fts_count} does not match embedded chunks {done_count}."
+    ),
+    "log.schema_backup": "Schema backup {filename}.",
+    "store.backup_failed": "Cannot back up the corpus database.",
+    "log.fts_failed": "Full-text search failed.",
 }

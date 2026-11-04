@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import sqlite3
 import stat
@@ -11,8 +13,11 @@ from pathlib import Path
 import pytest
 
 from ragcli.errors import EXIT_MISMATCH, EXIT_NOT_FOUND, EXIT_UNCLASSIFIED, RagError
+from ragcli.i18n.en import MESSAGES as EN_MESSAGES
+from ragcli.i18n.zh_Hant import MESSAGES as ZH_MESSAGES
 from ragcli.store.sqlite import (
     SCHEMA_VERSION,
+    _SCHEMA,
     ActiveIndex,
     Chunk,
     Document,
@@ -20,6 +25,7 @@ from ragcli.store.sqlite import (
     Run,
     SqliteStore,
     VectorRecord,
+    _sql_statements,
     chunk_id_for,
     decode_vector,
     encode_vector,
@@ -186,7 +192,7 @@ def store(tmp_path: Path):
 
 
 def test_schema_version_and_contract_sets():
-    assert SCHEMA_VERSION == 1
+    assert SCHEMA_VERSION == 2
     from ragcli.store import sqlite as module
 
     assert module.DOCUMENT_STATUSES == frozenset({"parsed", "complete"})
@@ -208,7 +214,8 @@ def test_new_data_dir_is_private_and_database_is_wal(tmp_path: Path):
             for name in ("images", "locks", "logs"):
                 assert mode(data / name) == 0o700
             assert mode(opened.db_path) == 0o600
-            assert opened.schema_version() == 1
+            assert opened.schema_version() == 2
+            assert not (data / "corpus.sqlite.v1.bak").exists()
             assert opened.journal_mode() == "wal"
             assert opened.foreign_keys_enabled() is True
             assert not (data / "logs" / "rag.log").exists()
@@ -257,12 +264,20 @@ def test_table_columns_match_the_design(store: SqliteStore):
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         )
     }
-    assert found == set(expected)
+    fts_names = {
+        "chunks_fts",
+        "chunks_fts_config",
+        "chunks_fts_content",
+        "chunks_fts_data",
+        "chunks_fts_docsize",
+        "chunks_fts_idx",
+    }
+    assert found == set(expected) | fts_names
     for table, columns in expected.items():
         info = tuple(row[1] for row in conn.execute(f"PRAGMA table_info({table})"))
         assert info == columns
-    versions = [row[0] for row in conn.execute("SELECT version FROM schema_migrations")]
-    assert versions == [1]
+    versions = [row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
+    assert versions == [1, 2]
     chunk_fks = {row[2] for row in conn.execute("PRAGMA foreign_key_list(chunks)")}
     assert chunk_fks == {"documents", "images", "chunks"}
     image_fks = {row[2] for row in conn.execute("PRAGMA foreign_key_list(images)")}
@@ -550,7 +565,23 @@ def test_sql_checks_reject_values_the_api_also_rejects(tmp_path: Path):
     conn.close()
 
 
-def test_newer_or_drifted_schema_is_refused_without_rewrite(tmp_path: Path):
+def test_unrecognized_schema_is_refused_without_rewrite(tmp_path: Path):
+    english = EN_MESSAGES["store.schema_refused"]
+    chinese = ZH_MESSAGES["store.schema_refused"]
+    assert english == (
+        "SQLite schema does not match this build. "
+        "An unrecognized schema is not repaired. "
+        "Restore from a data/ backup."
+    )
+    assert chinese == "SQLite 綱要不符合這個版本的程式。無法辨識的綱要不會就地修復。請從 data/ 備份還原。"
+    for text in (english, chinese):
+        assert "schema_version=1" not in text
+        assert "不會就地改寫" not in text
+    assert EN_MESSAGES["status.fts_mismatch"] == (
+        "FTS row count {fts_count} does not match embedded chunks {done_count}."
+    )
+    assert ZH_MESSAGES["status.fts_mismatch"] == "FTS 列數 {fts_count} 與已嵌入 {done_count} 不一致。"
+
     data = tmp_path / "data"
     with SqliteStore.open(data) as opened:
         opened.insert_document(make_document(title=SECRET))
@@ -559,31 +590,75 @@ def test_newer_or_drifted_schema_is_refused_without_rewrite(tmp_path: Path):
         (orphan / "keep.txt").write_text(SECRET, encoding="utf-8")
         db_path = opened.db_path
     conn = sqlite3.connect(db_path)
-    conn.execute("INSERT INTO schema_migrations (version) VALUES (2)")
+    conn.execute("INSERT INTO schema_migrations (version) VALUES (3)")
     conn.commit()
     conn.close()
     with pytest.raises(RagError) as exc:
         SqliteStore.open(data)
     assert exc.value.code == EXIT_MISMATCH
-    assert "backup" in exc.value.message
-    assert "will not rewrite it in place" in exc.value.message
+    assert exc.value.message == english
     assert (orphan / "keep.txt").read_text(encoding="utf-8") == SECRET
+    assert not (data / "corpus.sqlite.v1.bak").exists()
     conn = sqlite3.connect(db_path)
     assert conn.execute("SELECT title FROM documents").fetchone()[0] == SECRET
     assert conn.execute(
         "SELECT version FROM schema_migrations ORDER BY version"
-    ).fetchall() == [(1,), (2,)]
-    conn.execute("DELETE FROM schema_migrations WHERE version = 2")
+    ).fetchall() == [(1,), (2,), (3,)]
+    conn.execute("DELETE FROM schema_migrations WHERE version = 3")
     conn.execute("ALTER TABLE runs ADD COLUMN body TEXT")
     conn.commit()
     conn.close()
     with pytest.raises(RagError) as drifted:
         SqliteStore.open(data)
     assert drifted.value.code == EXIT_MISMATCH
+    assert not (data / "corpus.sqlite.v1.bak").exists()
     conn = sqlite3.connect(db_path)
     assert conn.execute("SELECT title FROM documents").fetchone()[0] == SECRET
     columns = [row[1] for row in conn.execute("PRAGMA table_info(runs)")]
     assert "body" in columns
+    conn.close()
+
+    extra = tmp_path / "extra"
+    with SqliteStore.open(extra) as opened:
+        opened.insert_document(make_document(title=SECRET))
+        extra_db = opened.db_path
+    conn = sqlite3.connect(extra_db)
+    conn.execute("CREATE TABLE extra (id INTEGER)")
+    conn.commit()
+    conn.close()
+    with pytest.raises(RagError) as extra_error:
+        SqliteStore.open(extra)
+    assert extra_error.value.code == EXIT_MISMATCH
+    assert not (extra / "corpus.sqlite.v1.bak").exists()
+    conn = sqlite3.connect(extra_db)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE name = 'extra'"
+    ).fetchone()[0] == "extra"
+    assert conn.execute("SELECT title FROM documents").fetchone()[0] == SECRET
+    conn.close()
+
+    missing = tmp_path / "missing"
+    with SqliteStore.open(missing) as opened:
+        missing_db = opened.db_path
+    conn = sqlite3.connect(missing_db)
+    conn.execute("DROP TABLE chunks_fts")
+    conn.commit()
+    conn.close()
+    with pytest.raises(RagError) as missing_error:
+        SqliteStore.open(missing)
+    assert missing_error.value.code == EXIT_MISMATCH
+    assert not (missing / "corpus.sqlite.v1.bak").exists()
+    conn = sqlite3.connect(missing_db)
+    names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    assert "chunks_fts" not in names
+    assert conn.execute(
+        "SELECT version FROM schema_migrations ORDER BY version"
+    ).fetchall() == [(1,), (2,)]
     conn.close()
 
 
@@ -765,3 +840,337 @@ def test_failed_parse_image_dir_is_an_orphan_on_next_open(tmp_path: Path):
     with SqliteStore.open(data):
         pass
     assert not (data / "images" / DOC).exists()
+
+
+FTS_NAMES = {
+    "chunks_fts",
+    "chunks_fts_config",
+    "chunks_fts_content",
+    "chunks_fts_data",
+    "chunks_fts_docsize",
+    "chunks_fts_idx",
+}
+CLAUSE = "根據第12條退款金額為100元。"
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _master_names(db_path: Path) -> set[str]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+    finally:
+        conn.close()
+
+
+def _versions(db_path: Path) -> list[int]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return [
+            int(row[0])
+            for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
+        ]
+    finally:
+        conn.close()
+
+
+def build_version_one(data: Path) -> Path:
+    """Create a version 1 corpus with one done chunk and one pending chunk."""
+    data.mkdir(parents=True)
+    db_path = data / "corpus.sqlite"
+    fd = os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    os.close(fd)
+    document = make_document(title=SECRET)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        for statement in _sql_statements(_SCHEMA):
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)")
+        conn.execute(
+            """
+            INSERT INTO documents (
+                doc_id, source_path, filename, media_type, byte_size, sha256,
+                title, parser, parser_version, page_count, ingested_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                document.doc_id,
+                document.source_path,
+                document.filename,
+                document.media_type,
+                document.byte_size,
+                document.sha256,
+                document.title,
+                document.parser,
+                document.parser_version,
+                document.page_count,
+                document.ingested_at,
+                document.status,
+            ),
+        )
+        for ordinal, text, state in ((0, CLAUSE, "done"), (1, "waiting", "pending")):
+            conn.execute(
+                """
+                INSERT INTO chunks (
+                    chunk_id, doc_id, ordinal, text, kind, page_start, page_end,
+                    section, image_id, anchor_chunk_id, token_estimate, embed_state
+                ) VALUES (?, ?, ?, ?, 'text', 1, 1, NULL, NULL, NULL, 8, ?)
+                """,
+                (chunk_id_for(DOC, ordinal), DOC, ordinal, text, state),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+def test_version_one_migrates_done_chunks_and_writes_a_private_backup(tmp_path: Path, caplog):
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    with SqliteStore.open(data) as opened:
+        assert opened.schema_version() == 2
+        assert _versions(db_path) == [1, 2]
+        assert FTS_NAMES <= _master_names(db_path)
+        info = tuple(row[1] for row in opened._connection().execute("PRAGMA table_info(chunks)"))
+        assert info == CHUNK_COLUMNS
+        assert opened.count_fts_rows() == 1
+        hits = opened.search_fts('"第12條"', 5)
+        assert [item[0] for item in hits] == [chunk_id_for(DOC, 0)]
+        assert opened.search_fts('"waiting"', 5) == []
+        backup = data / "corpus.sqlite.v1.bak"
+        assert backup.is_file()
+        assert not backup.is_symlink()
+        assert mode(backup) == 0o600
+        assert _versions(backup) == [1]
+        assert "corpus.sqlite.v1.bak" in caplog.text
+        assert str(data) not in caplog.text
+        assert SECRET not in caplog.text
+        assert CLAUSE not in caplog.text
+        digest = _digest(backup)
+        inode = backup.stat().st_ino
+    with SqliteStore.open(data) as again:
+        assert again.schema_version() == 2
+    assert _digest(backup) == digest
+    assert backup.stat().st_ino == inode
+
+
+def test_existing_version_one_backup_is_not_overwritten(tmp_path: Path):
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    backup = data / "corpus.sqlite.v1.bak"
+    source = sqlite3.connect(db_path)
+    try:
+        dest = sqlite3.connect(backup)
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        source.close()
+    os.chmod(backup, 0o600)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        INSERT INTO chunks (
+            chunk_id, doc_id, ordinal, text, kind, page_start, page_end,
+            section, image_id, anchor_chunk_id, token_estimate, embed_state
+        ) VALUES (?, ?, 2, 'later refunds', 'text', 1, 1, NULL, NULL, NULL, 4, 'done')
+        """,
+        (chunk_id_for(DOC, 2), DOC),
+    )
+    conn.commit()
+    conn.close()
+    digest = _digest(backup)
+    with SqliteStore.open(data) as opened:
+        found = {item[0] for item in opened.search_fts('"第12條" OR "refunds"', 5)}
+        assert chunk_id_for(DOC, 0) in found
+        assert chunk_id_for(DOC, 2) in found
+        assert opened.count_fts_rows() == 2
+    assert _digest(backup) == digest
+    saved = sqlite3.connect(f"file:{backup.as_posix()}?mode=ro", uri=True)
+    try:
+        assert saved.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 2
+        assert _versions(backup) == [1]
+    finally:
+        saved.close()
+    with SqliteStore.open(data):
+        pass
+    assert _digest(backup) == digest
+
+
+def _connect_proxy(*, fail_backup: bool = False, fail_backfill: bool = False):
+    """Wrap connections so a test can fail backup or the FTS backfill."""
+    real_connect = sqlite3.connect
+
+    class Proxy:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            object.__setattr__(self, "_inner", inner)
+
+        def __getattr__(self, name: str):
+            return getattr(self._inner, name)
+
+        def __setattr__(self, name: str, value: object) -> None:
+            setattr(self._inner, name, value)
+
+        def execute(self, sql, parameters=(), /):
+            if fail_backfill and isinstance(sql, str) and "INSERT INTO chunks_fts" in sql:
+                raise sqlite3.OperationalError("injected")
+            return self._inner.execute(sql, parameters)
+
+        def backup(self, target, *args, **kwargs):
+            if fail_backup:
+                raise sqlite3.OperationalError("backup failed")
+            inner = target._inner if isinstance(target, Proxy) else target
+            return self._inner.backup(inner, *args, **kwargs)
+
+    def connect(*args, **kwargs):
+        return Proxy(real_connect(*args, **kwargs))
+
+    return connect
+
+
+@pytest.mark.parametrize("kind", ["backup", "chmod"])
+def test_failed_new_backup_is_removed_and_database_stays_version_one(tmp_path, monkeypatch, kind):
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    backup = data / "corpus.sqlite.v1.bak"
+    if kind == "backup":
+        monkeypatch.setattr(
+            "ragcli.store.sqlite.sqlite3.connect",
+            _connect_proxy(fail_backup=True),
+        )
+    else:
+        real_chmod = os.chmod
+
+        def broken_chmod(path, file_mode):
+            if str(path).endswith("corpus.sqlite.v1.bak"):
+                raise OSError(13, "denied")
+            return real_chmod(path, file_mode)
+
+        monkeypatch.setattr("ragcli.store.sqlite.os.chmod", broken_chmod)
+    with pytest.raises(RagError) as exc:
+        SqliteStore.open(data)
+    assert exc.value.code == EXIT_MISMATCH
+    assert exc.value.message == EN_MESSAGES["store.backup_failed"]
+    assert SECRET not in exc.value.message
+    assert CLAUSE not in exc.value.message
+    assert not backup.exists()
+    assert not Path(str(backup) + "-wal").exists()
+    assert not Path(str(backup) + "-shm").exists()
+    assert _versions(db_path) == [1]
+    assert "chunks_fts" not in _master_names(db_path)
+
+
+def test_empty_existing_backup_refuses_migration(tmp_path: Path):
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    backup = data / "corpus.sqlite.v1.bak"
+    backup.write_bytes(b"")
+    with pytest.raises(RagError) as exc:
+        SqliteStore.open(data)
+    assert exc.value.code == EXIT_MISMATCH
+    assert exc.value.message == EN_MESSAGES["store.backup_failed"]
+    assert backup.read_bytes() == b""
+    assert _versions(db_path) == [1]
+    assert "chunks_fts" not in _master_names(db_path)
+
+
+def test_invalid_existing_backup_is_left_in_place(tmp_path: Path):
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    backup = data / "corpus.sqlite.v1.bak"
+    backup.write_bytes(b"not a database")
+    digest = _digest(backup)
+    with pytest.raises(RagError) as exc:
+        SqliteStore.open(data)
+    assert exc.value.code == EXIT_MISMATCH
+    assert _digest(backup) == digest
+    assert _versions(db_path) == [1]
+    assert "chunks_fts" not in _master_names(db_path)
+
+
+def test_backup_symlink_is_not_followed(tmp_path: Path):
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_bytes(b"keep-me")
+    backup = data / "corpus.sqlite.v1.bak"
+    backup.symlink_to(sentinel)
+    with pytest.raises(RagError) as exc:
+        SqliteStore.open(data)
+    assert exc.value.code == EXIT_MISMATCH
+    assert exc.value.message == EN_MESSAGES["store.backup_failed"]
+    assert sentinel.read_bytes() == b"keep-me"
+    assert backup.is_symlink()
+    assert _versions(db_path) == [1]
+    assert "chunks_fts" not in _master_names(db_path)
+
+
+def test_failed_migration_rolls_back_without_shadow_tables(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    db_path = build_version_one(data)
+    monkeypatch.setattr(
+        "ragcli.store.sqlite.sqlite3.connect",
+        _connect_proxy(fail_backfill=True),
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        SqliteStore.open(data)
+    assert _versions(db_path) == [1]
+    assert "chunks_fts" not in _master_names(db_path)
+    monkeypatch.undo()
+    with SqliteStore.open(data) as opened:
+        assert opened.schema_version() == 2
+        assert opened.count_fts_rows() == 1
+
+
+def test_fts_follows_embed_state(store: SqliteStore):
+    store.insert_document(make_document())
+    blocked = make_chunk(ordinal=0, text="refunds", embed_state="blocked")
+    store.insert_chunk(blocked)
+    store.update_chunk_text(blocked.chunk_id, "updated", 4)
+    assert store.count_fts_rows() == 0
+    assert store.search_fts('"updated"', 5) == []
+
+    ready = make_chunk(ordinal=1, text="refunds", embed_state="pending")
+    store.insert_chunk(ready)
+    store.set_embed_state(ready.chunk_id, "done")
+    store.set_embed_state(ready.chunk_id, "done")
+    assert store.count_fts_rows() == 1
+    assert [item[0] for item in store.search_fts('"refunds"', 5)] == [ready.chunk_id]
+    store.update_chunk_text(ready.chunk_id, "beta token", 4)
+    assert store.count_fts_rows() == 1
+    assert store.search_fts('"refunds"', 5) == []
+    assert [item[0] for item in store.search_fts('"beta"', 5)] == [ready.chunk_id]
+
+    store.set_embed_state(ready.chunk_id, "pending")
+    assert store.search_fts('"beta"', 5) == []
+    store.set_embed_state(ready.chunk_id, "done")
+    store.delete_chunk(ready.chunk_id)
+    assert store.search_fts('"beta"', 5) == []
+
+    other = make_chunk(DOC_B, ordinal=0, text="refunds", embed_state="done")
+    store.insert_document(make_document(DOC_B, source_path="/docs/other.md", media_type="text", parser="text"))
+    store.insert_chunk(other)
+    assert store.count_fts_rows() == 1
+    store.delete_document(DOC_B)
+    assert store.search_fts('"refunds"', 5) == []
+    assert store.count_fts_rows() == 0
+
+
+def test_search_fts_error_omits_the_query(store: SqliteStore, caplog):
+    caplog.set_level(logging.WARNING)
+    store.insert_document(make_document())
+    store.insert_chunk(make_chunk(text=SECRET, embed_state="done"))
+    assert store.search_fts("1,200", 5) == []
+    assert EN_MESSAGES["log.fts_failed"] in caplog.text
+    assert SECRET not in caplog.text
+    assert "1,200" not in caplog.text
