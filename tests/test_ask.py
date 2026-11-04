@@ -282,13 +282,29 @@ def test_pack_stops_when_the_next_chunk_does_not_fit():
     near = Excerpt("near", "a.pdf", 1, "text", "近", 0.1)
     far = Excerpt("far", "b.pdf", 2, "text", "遠" * 40, 0.2)
     later = Excerpt("x", "c.pdf", 3, "text", "短", 0.3)
+    ordered = sorted([later, far, near], key=lambda item: item.distance)
     first = estimate_tokens(format_excerpt(1, near))
-    packed = pack_excerpts([later, far, near], first)
+    packed = pack_excerpts(ordered, first)
     assert [item.chunk_id for item in packed] == ["near"]
     assert packed[0].text == "近"
     remainder = first - estimate_tokens(format_excerpt(1, near))
     assert estimate_tokens(format_excerpt(2, later)) <= first
     assert remainder == 0
+
+
+def test_pack_keeps_caller_order_and_does_not_skip():
+    first = Excerpt("first", "a.pdf", 1, "text", "甲" * 8, 0.9)
+    blocker = Excerpt("block", "b.pdf", 2, "text", "乙" * 40, 0.2)
+    short = Excerpt("short", "c.pdf", 3, "text", "短", 0.1)
+    kept = pack_excerpts([first, blocker, short], 10_000)
+    assert [item.chunk_id for item in kept] == ["first", "block", "short"]
+    opening = estimate_tokens(format_excerpt(1, first))
+    short_next = estimate_tokens(format_excerpt(2, short))
+    blocked = estimate_tokens(format_excerpt(2, blocker))
+    budget = opening + short_next
+    assert opening + blocked > budget
+    packed = pack_excerpts([first, blocker, short], budget)
+    assert [item.chunk_id for item in packed] == ["first"]
 
 
 def test_pack_rejects_when_the_first_chunk_does_not_fit():

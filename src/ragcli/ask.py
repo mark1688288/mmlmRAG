@@ -2,9 +2,10 @@
 
 The query string uses the Qwen3-Embedding instruction. Document text does
 not. ``Query:`` has no space before the question. Hits whose best cosine
-distance is above the configured gate never load a generator. Excerpts are
-packed nearest-first into the context budget; a chunk that does not fit is
-left out whole, and if the first chunk does not fit the prompt is not sent.
+distance is above the configured gate never load a generator. Vector hits
+are ordered by distance and then packed in that order; a chunk that does
+not fit is left out whole, and if the first chunk does not fit the prompt
+is not sent.
 """
 
 from __future__ import annotations
@@ -135,17 +136,16 @@ def retrieval_budget(
 
 
 def pack_excerpts(excerpts: Sequence[Excerpt], budget: int) -> list[Excerpt]:
-    """Keep a nearest-first prefix that fits. Do not cut a chunk or skip ahead.
+    """Keep the caller order. Do not sort. Do not skip a later shorter chunk.
 
-    The first excerpt that does not fit ends the pack. If that is also the
-    first excerpt, raise exit 9 and do not build a partial prompt.
+    The first item that does not fit stops the pack. If that item is also
+    the first item, exit 9 and do not build a partial prompt.
     """
     if isinstance(budget, bool) or not isinstance(budget, int):
         raise RagError(EXIT_UNCLASSIFIED, t("ask.budget_type"))
-    ordered = sorted(excerpts, key=lambda item: item.distance)
     packed: list[Excerpt] = []
     used = 0
-    for item in ordered:
+    for item in excerpts:
         cost = estimate_tokens(format_excerpt(len(packed) + 1, item))
         if used + cost > budget:
             if not packed:
