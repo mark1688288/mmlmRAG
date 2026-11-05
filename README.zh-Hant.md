@@ -262,6 +262,9 @@ INFO Unloaded qwen3.5:4b
 [來源: IC-Report-Volume2_tc.pdf p.103 #5c2d253b347e:000132]
 INFO Exit code 0
 ```
+##### v0.1.3 測試提升準確度
+<img src="imgs/mmlmRAG_LiveDemo-0.1.3.jpeg" alt="Hybrid retrieval" width="720">
+
 
 #### OCR 圖像轉文字
 
