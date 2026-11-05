@@ -122,24 +122,7 @@ Document text, page images, and embeddings stay on this Mac. `rag.toml` has no s
 
 <img src="imgs/mmlmRAG_models-pull.jpeg" alt="rag models pull" width="720">
 
-### Ingest
-
-<img src="imgs/mmlmRAG_ingest.jpeg" alt="rag ingest" width="720">
-
-### Ask
-
-<img src="imgs/mmlmRAG_ask.jpeg" alt="rag ask" width="720">
-
 ### Live demo
-#### PDF to text
-source: empf.org.hk - Mandatory Provident Fund Schemes (Specification of Dates for Purposes of Section 19M(2)(a)) (Amendment) Notice 2026 
-
-<img src="imgs/mmlmRAG_LiveDemo.jpeg" alt="Ingest a PDF, then ask" width="720">
-
-source: hb.gov.hk/eng/policy/housing/policy/light_public_housing/pamphlet.html - "Light Public Housing — Full Rollout"
-
-<img src="imgs/mmlmRAG_LiveDemo-ocr-pdf.jpeg" alt="Ingest a PDF with OCR, then ask" width="720">
-
 #### Long documents
 
 source: www[.]gov.hk/en/residents/government/policy/government_reports/reports_index.htm - Report of the Independent Committee in relation to the fire at Wang Fuk Court in Tai Po (Volume 1 & Volume 2)
@@ -191,16 +174,13 @@ INFO Exit code 0
 
 source: [samples-live/demo.gif](samples-live/demo.gif)
 
-<img src="imgs/mmlmRAG_LiveDemo-ocr-ingest.jpeg" alt="Ingest a GIF" width="720">
-<img src="imgs/mmlmRAG_LiveDemo-ocr-ask.jpeg" alt="Ask a GIF" width="720">
+<img src="imgs/mmlmRAG_LiveDemo-ocr.en.jpeg" alt="Ask a GIF" width="720">
 
 #### OCR-Vision Image find objects
 
 source: [samples-live/demo.jpeg](samples-live/demo.jpeg)
 
-<img src="imgs/mmlmRAG_LiveDemo-ocr-find-objects.jpeg" alt="Find objects in images 1" width="720">
-
-<img src="imgs/mmlmRAG_LiveDemo-ocr-vision-find-obj.jpg" alt="Find objects in images 2" width="720">
+<img src="imgs/mmlmRAG_LiveDemo-ocr-vision-find-obj.en.jpeg" alt="Find objects in images" width="720">
 
 #### Query corpus
 <img src="imgs/mmlmRAG_LiveDemo-corpus-query.jpeg" alt="Query the corpus" width="720">
