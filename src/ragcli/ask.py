@@ -6,9 +6,11 @@ distance is above the configured gate never load a generator, do not query
 FTS, and do not expand neighboring chunks. When hybrid retrieval is on,
 vector hits and FTS hits are merged with RRF. Same-document chunks at
 ordinal ±1 then follow those direct hits. Optional reranking is off unless
-requested. A skip leaves the same direct hits as reranking off. A chunk
-that does not fit is left out whole, and if the first chunk does not fit
-the prompt is not sent.
+requested. A skip leaves the same direct hits as reranking off. Optional
+verification is off unless requested. It asks the loaded generator for an
+exact PASS or FAIL and does not retrieve again. A chunk that does not fit
+is left out whole, and if the first chunk does not fit the prompt is not
+sent.
 """
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ from ragcli.prompt import (
     is_refusal,
     refusal_sentence,
     system_prompt,
+    verify_system_prompt,
+    verify_user_message,
 )
 from ragcli.retrieve import (
     RERANK_MODEL,
@@ -68,6 +72,7 @@ from ragcli.retrieve import (
     RERANK_TOP_LOGPROBS,
     MergedHit,
     fts_match_query,
+    parse_verdict,
     rerank_user,
     rrf_merge,
     template_accepts_rerank,
@@ -186,6 +191,7 @@ def run_ask(
     hybrid: bool | None = None,
     neighbors: bool | None = None,
     rerank: bool | None = None,
+    verify: bool | None = None,
     lock_timeout: float | None = None,
     client: OllamaClient | None = None,
     available: int | None = None,
@@ -201,6 +207,7 @@ def run_ask(
     use_hybrid = _resolve_hybrid(config, hybrid)
     use_neighbors = _resolve_neighbors(config, neighbors)
     use_rerank = _resolve_rerank(config, rerank)
+    use_verify = _resolve_verify(config, verify)
     _require_disk(config, free_bytes)
     with _session(config, clock, client_factory=client_factory) as (store, index, outcome):
         _execute(
@@ -217,6 +224,7 @@ def run_ask(
             hybrid=use_hybrid,
             neighbors=use_neighbors,
             rerank=use_rerank,
+            verify=use_verify,
             lock_timeout=lock_timeout,
             client=client,
             available=available,
@@ -239,6 +247,7 @@ def _execute(
     hybrid: bool,
     neighbors: bool,
     rerank: bool,
+    verify: bool,
     lock_timeout: float | None,
     client: OllamaClient | None,
     available: int | None,
@@ -333,13 +342,24 @@ def _execute(
             preferred=config.generate_model if model is None else model,
             allow_fallback=allow_fallback,
             available=available,
+            hold=verify,
         )
-    refused = is_refusal(content)
-    answer = refusal_sentence() if refused else content
-    if refused:
-        logger.info("%s", t("log.model_refused"))
-        outcome.refused_count = 1
-    outcome.chunk_count = len(packed)
+        outcome.chunk_count = len(packed)
+        if verify:
+            answer, refused = _apply_verdict(
+                config,
+                ollama,
+                outcome,
+                question,
+                packed,
+                content,
+            )
+        else:
+            refused = is_refusal(content)
+            answer = refusal_sentence() if refused else content
+            if refused:
+                logger.info("%s", t("log.model_refused"))
+                outcome.refused_count = 1
     _emit(answer, refused=refused, model=outcome.model_name, sources=packed, as_json=as_json)
 
 
@@ -381,6 +401,7 @@ def _generate(
     preferred: str,
     allow_fallback: bool,
     available: int | None,
+    hold: bool = False,
 ) -> str:
     try:
         installed = client.tags()
@@ -411,7 +432,7 @@ def _generate(
             num_ctx=config.generate_num_ctx,
             num_predict=config.num_predict,
             temperature=config.temperature,
-            keep_alive=KEEP_ALIVE_DONE,
+            keep_alive=KEEP_ALIVE_BATCH if hold else KEEP_ALIVE_DONE,
         )
     except RagError as exc:
         body_error = exc
@@ -421,10 +442,103 @@ def _generate(
         body_error = exc
         raise
     finally:
-        _release_if_loaded(client, chosen, body_error, outcome)
+        if not hold or body_error is not None:
+            _release_if_loaded(client, chosen, body_error, outcome)
     if result is None or result.thinking_only or result.content.strip() == "":
+        if hold:
+            _release_if_loaded(client, chosen, None, outcome)
         raise RagError(EXIT_UNCLASSIFIED, t("ask.empty_generation"))
     return result.content
+
+
+def _apply_verdict(
+    config: Config,
+    client: OllamaClient,
+    outcome: _Outcome,
+    question: str,
+    packed: Sequence[Excerpt],
+    draft: str,
+) -> tuple[str, bool]:
+    """Check one draft with the generator that is already loaded.
+
+    The model stays loaded from the first chat. This function unloads it
+    before returning. An exact FAIL becomes the refusal sentence. Any other
+    text is exit 1. A prompt that does not fit leaves the draft unchanged.
+    A model refusal is not checked again. This does not retrieve.
+    """
+    model = outcome.model_name
+    if not isinstance(model, str) or model == "":
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.empty_generation"))
+    system = verify_system_prompt()
+    user = verify_user_message(question, packed, draft)
+    body_error: BaseException | None = None
+    verdict_result = None
+    if is_refusal(draft):
+        mode = "refusal"
+    elif not _verify_fits(config, system, user):
+        mode = "unfit"
+    else:
+        mode = "chat"
+    try:
+        if mode == "chat":
+            try:
+                verdict_result = client.chat(
+                    model,
+                    (
+                        ChatMessage("system", system),
+                        ChatMessage("user", user),
+                    ),
+                    num_ctx=config.generate_num_ctx,
+                    num_predict=config.verify_num_predict,
+                    temperature=0,
+                    keep_alive=KEEP_ALIVE_DONE,
+                )
+            except RagError as exc:
+                body_error = exc
+                _note_ollama(outcome, exc)
+                raise
+            except BaseException as exc:
+                body_error = exc
+                raise
+    finally:
+        _release_if_loaded(client, model, body_error, outcome)
+    if mode == "refusal":
+        logger.info("%s", t("log.model_refused"))
+        outcome.refused_count = 1
+        return refusal_sentence(), True
+    if mode == "unfit":
+        logger.warning("%s", t("ask.verify_unfit"))
+        return draft, False
+    if (
+        verdict_result is None
+        or verdict_result.thinking_only
+        or verdict_result.content.strip() == ""
+    ):
+        raise RagError(EXIT_UNCLASSIFIED, t("ask.empty_generation"))
+    verdict = parse_verdict(verdict_result.content)
+    if verdict == "pass":
+        logger.info("%s", t("log.verify_pass"))
+        return draft, False
+    if verdict == "fail":
+        logger.warning("%s", t("log.verify_fail"))
+        outcome.refused_count = 1
+        return refusal_sentence(), True
+    raise RagError(EXIT_UNCLASSIFIED, t("ask.verify_invalid"))
+
+
+def _verify_fits(config: Config, system: str, user: str) -> bool:
+    """True when the second prompt and its short answer fit in ``num_ctx``.
+
+    The sum is both prompts, ``verify_num_predict``, and the fixed 128-token
+    margin. Equality still fits. The excerpts and the draft are not shortened.
+    """
+    cost = (
+        estimate_tokens(system)
+        + estimate_tokens(user)
+        + config.verify_num_predict
+        + SAFETY_TOKENS
+    )
+    return cost <= config.generate_num_ctx
 
 
 def _release_if_loaded(
@@ -889,6 +1003,14 @@ def _resolve_rerank(config: Config, rerank: bool | None) -> bool:
     if not isinstance(rerank, bool):
         raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.rerank"))
     return rerank
+
+
+def _resolve_verify(config: Config, verify: bool | None) -> bool:
+    if verify is None:
+        return config.verify
+    if not isinstance(verify, bool):
+        raise RagError(EXIT_USAGE, t("config.retrieve_bool", label="retrieve.verify"))
+    return verify
 
 
 def _resolve_k(config: Config, k: int | None) -> int:

@@ -1,10 +1,11 @@
 """System prompt and the user message for one question.
 
-The system prompt body stays Traditional Chinese. Only ``ask.refusal`` and
-the five excerpt headers follow the interface language. ``think`` is not a
-setting, and this module does not call Ollama or read the corpus. A missing
-page is omitted rather than printed as -1. Citation brackets are instructions
-to the model; the program does not parse them back out of the answer.
+The answer system prompt body stays Traditional Chinese. ``ask.refusal``,
+the five excerpt headers, and the verification prompts follow the interface
+language. ``think`` is not a setting, and this module does not call Ollama
+or read the corpus. A missing page is omitted rather than printed as -1.
+Citation brackets are instructions to the model; the program does not parse
+them back out of the answer.
 """
 
 from __future__ import annotations
@@ -100,4 +101,27 @@ def format_user_message(question: str, excerpts: Sequence[Excerpt]) -> str:
         + question
         + t("prompt.user.excerpts")
         + "\n".join(blocks)
+    )
+
+
+def verify_system_prompt() -> str:
+    """System prompt for the verification chat. It is not the answer prompt."""
+    return t("prompt.verify.system")
+
+
+def verify_user_message(question: str, excerpts: Sequence[Excerpt], draft: str) -> str:
+    """Question, numbered excerpts, and the draft.
+
+    ``t()`` fills the template once and does not format the three values
+    again, so braces inside the draft stay literal.
+    """
+    blocks = [
+        format_excerpt(index, excerpt)
+        for index, excerpt in enumerate(excerpts, start=1)
+    ]
+    return t(
+        "prompt.verify.user",
+        question=question,
+        excerpts="\n".join(blocks),
+        draft=draft,
     )

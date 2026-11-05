@@ -1,8 +1,9 @@
-"""Pure helpers for hybrid retrieval and yes/no rerank scores.
+"""Pure helpers for hybrid retrieval, yes/no rerank scores, and verdicts.
 
 ``fts_match_query`` keeps protected spans only and never reads the corpus.
 ``rrf_merge`` ranks by list position. ``yes_no_score`` only reads token
-logprobs. None of these functions calls Ollama.
+logprobs. ``parse_verdict`` accepts only exact ``PASS`` and ``FAIL``.
+None of these functions calls Ollama.
 """
 
 from __future__ import annotations
@@ -168,6 +169,25 @@ def yes_no_score(top: Sequence[tuple[str, float]]) -> float | None:
     ey = math.exp(yes - pivot)
     en = math.exp(no - pivot)
     return ey / (ey + en)
+
+
+def parse_verdict(content: str) -> str:
+    """Return ``pass``, ``fail``, or ``invalid``.
+
+    Only ``content.strip()`` of exactly ``PASS`` or exactly ``FAIL`` counts.
+    A period, an explanation, or the refusal sentence is ``invalid``.
+    An empty string is also ``invalid`` here. The caller treats empty chat
+    content as an empty generation before calling this function, and does
+    not read ``thinking`` as the verdict.
+    """
+    if not isinstance(content, str):
+        return "invalid"
+    text = content.strip()
+    if text == "PASS":
+        return "pass"
+    if text == "FAIL":
+        return "fail"
+    return "invalid"
 
 
 def rerank_user(instruction: str, query: str, document: str) -> str:

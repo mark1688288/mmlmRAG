@@ -198,6 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ask.add_argument("--rerank", action="store_true", help=t("help.ask.rerank"))
     ask.add_argument("--no-rerank", action="store_true", help=t("help.ask.no_rerank"))
+    ask.add_argument("--verify", action="store_true", help=t("help.ask.verify"))
+    ask.add_argument("--no-verify", action="store_true", help=t("help.ask.no_verify"))
     ask.add_argument("--model", help=t("help.ask.model"))
     ask.add_argument(
         "--no-fallback", action="store_true", help=t("help.ask.no_fallback")
@@ -442,6 +444,11 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
             EXIT_USAGE,
             t("usage.flag_conflict", on="--rerank", off="--no-rerank"),
         )
+    if bool(args.verify) and bool(args.no_verify):
+        raise RagError(
+            EXIT_USAGE,
+            t("usage.flag_conflict", on="--verify", off="--no-verify"),
+        )
     hybrid: bool | None
     if args.hybrid:
         hybrid = True
@@ -463,6 +470,13 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         rerank = False
     else:
         rerank = None
+    verify: bool | None
+    if args.verify:
+        verify = True
+    elif args.no_verify:
+        verify = False
+    else:
+        verify = None
     return run_ask(
         config,
         _question_text(args.question),
@@ -474,6 +488,7 @@ def _cmd_ask(args: argparse.Namespace, config: Config) -> int:
         hybrid=hybrid,
         neighbors=neighbors,
         rerank=rerank,
+        verify=verify,
         lock_timeout=_lock_timeout(args),
     )
 

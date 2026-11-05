@@ -176,12 +176,16 @@ def test_ask_help_lists_hybrid_flags(monkeypatch, tmp_path):
     assert "--no-neighbors" in out
     assert "--rerank" in out
     assert "--no-rerank" in out
+    assert "--verify" in out
+    assert "--no-verify" in out
     assert "Turn reranking on for this question" in flat(out)
     assert "Turn reranking off for this question" in flat(out)
     assert "Turn hybrid retrieval on for this question" in flat(out)
     assert "Turn hybrid retrieval off for this question" in flat(out)
     assert "Turn neighboring chunks on for this question" in flat(out)
     assert "Turn neighboring chunks off for this question" in flat(out)
+    assert "Turn verification on for this question" in flat(out)
+    assert "Turn verification off for this question" in flat(out)
 
 
 def test_hybrid_flags_cannot_both_be_set(monkeypatch, tmp_path):
@@ -306,6 +310,31 @@ def test_rerank_flags_cannot_both_be_set(monkeypatch, tmp_path):
     assert "--rerank and --no-rerank cannot both be set." in err
 
 
+def test_verify_flags_cannot_both_be_set(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["ask", "--verify", "--no-verify", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "--verify and --no-verify cannot both be set." in err
+
+
+def test_verify_flag_conflict_follows_zh(monkeypatch, tmp_path):
+    write_config(tmp_path)
+    code, out, err = invoke(
+        monkeypatch,
+        ["--lang", "zh", "ask", "--verify", "--no-verify", "問題"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert out == ""
+    assert "不可以同時指定 --verify 同 --no-verify。" in err
+    assert "cannot both be set" not in err
+
+
 def test_rerank_flag_conflict_follows_zh(monkeypatch, tmp_path):
     write_config(tmp_path)
     code, out, err = invoke(
@@ -361,6 +390,36 @@ def test_rerank_settings_reject_bad_values(monkeypatch, tmp_path, body, message)
     assert message in err
 
 
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("[retrieve]\nverify = 1\n", "retrieve.verify must be a boolean."),
+        ('[retrieve]\nverify = "yes"\n', "retrieve.verify must be a boolean."),
+        (
+            "[retrieve]\nverify_num_predict = 7\n",
+            "retrieve.verify_num_predict must be from 8 to 64.",
+        ),
+        (
+            "[retrieve]\nverify_num_predict = 65\n",
+            "retrieve.verify_num_predict must be from 8 to 64.",
+        ),
+        (
+            "[retrieve]\nverify_num_predict = true\n",
+            "retrieve.verify_num_predict must be an integer.",
+        ),
+    ],
+)
+def test_verify_settings_reject_bad_values(monkeypatch, tmp_path, body, message):
+    write_config(tmp_path, body)
+    code, _out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_USAGE
+    assert message in err
+
+
 def test_rerank_defaults_and_bounds_are_shown(monkeypatch, tmp_path):
     write_config(
         tmp_path,
@@ -386,6 +445,21 @@ def test_rerank_defaults_and_bounds_are_shown(monkeypatch, tmp_path):
     assert values["retrieve.rerank_model"] == "qwen3-reranker:0.6b"
     assert values["retrieve.rerank_candidates"] == "15"
     assert values["retrieve.rerank_num_ctx"] == "1536"
+
+
+@pytest.mark.parametrize("value", [8, 64])
+def test_verify_num_predict_bounds_are_shown(monkeypatch, tmp_path, value):
+    write_config(tmp_path, f"[retrieve]\nverify = true\nverify_num_predict = {value}\n")
+    code, out, err = invoke(
+        monkeypatch,
+        ["--config", str(tmp_path / "rag.toml"), "config", "show"],
+        cwd=tmp_path,
+    )
+    assert code == EXIT_OK
+    assert err == ""
+    values = shown(out)
+    assert values["retrieve.verify"] == "true"
+    assert values["retrieve.verify_num_predict"] == str(value)
 
 
 def test_ingest_help_lists_flags(monkeypatch, tmp_path):
@@ -444,6 +518,8 @@ def test_repo_config_show_matches_design(monkeypatch, tmp_path):
         "retrieve.rerank_model": "qwen3-reranker:0.6b",
         "retrieve.rerank_candidates": "16",
         "retrieve.rerank_num_ctx": "2048",
+        "retrieve.verify": "false",
+        "retrieve.verify_num_predict": "32",
         "chunk.target_tokens": "480",
         "chunk.max_tokens": "640",
         "chunk.overlap_tokens": "80",
@@ -1542,13 +1618,15 @@ def test_help_text_is_translated_inside_parser_builders():
         for message_id in by_function[name]
         if message_id.startswith("help.")
     ]
-    assert len(help_calls) == 52
+    assert len(help_calls) == 54
     assert help_calls.count("help.ask.hybrid") == 1
     assert help_calls.count("help.ask.no_hybrid") == 1
     assert help_calls.count("help.ask.neighbors") == 1
     assert help_calls.count("help.ask.no_neighbors") == 1
     assert help_calls.count("help.ask.rerank") == 1
     assert help_calls.count("help.ask.no_rerank") == 1
+    assert help_calls.count("help.ask.verify") == 1
+    assert help_calls.count("help.ask.no_verify") == 1
     assert help_calls.count("help.metavar.action") == 2
     assert "help.lang" in by_function["_add_globals"]
     assert by_function["_CatalogHelpFormatter._format_usage"] == ["help.usage_prefix"]

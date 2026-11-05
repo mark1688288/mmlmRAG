@@ -24,6 +24,7 @@ from ragcli.retrieve import (
     rerank_user,
     rrf_merge,
     rrf_score,
+    parse_verdict,
     template_accepts_rerank,
     yes_no_score,
 )
@@ -189,3 +190,22 @@ def test_rrf_example_two_keeps_the_tied_vector_hit_ahead_of_fts():
         MergedHit("F", None, "fts"),
     ]
     assert rrf_score([1]) == pytest.approx(1 / 61)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("PASS", "pass"),
+        ("  PASS\n", "pass"),
+        ("FAIL", "fail"),
+        ("\nFAIL\n", "fail"),
+        ("", "invalid"),
+        ("PASS.", "invalid"),
+        ("FAIL\nbecause", "invalid"),
+        ("pass", "invalid"),
+        ("fail", "invalid"),
+        ("The documents do not contain the answer.", "invalid"),
+    ],
+)
+def test_parse_verdict_accepts_only_exact_pass_and_fail(content, expected):
+    assert parse_verdict(content) == expected

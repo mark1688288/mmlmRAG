@@ -58,6 +58,9 @@ class FakeOllama:
         self.drop_on_zero_keep_alive = False
         self.vectors = [[0.25, 0.5]]
         self.chat_message: dict = {"role": "assistant", "content": "答案", "thinking": ""}
+        self.chat_replies: list[dict] | None = None
+        self.fail_plain_chat: int | None = None
+        self._plain_chat_count = 0
         self.chat_logprobs = None
         self.rerank_replies: list[dict] | None = None
         self.fail_logprob_chat: int | None = None
@@ -133,6 +136,10 @@ class FakeOllama:
             if self.fail_logprob_chat == self._logprob_chat_count:
                 self._show(body["model"], body["options"]["num_ctx"], body.get("keep_alive"))
                 return httpx.Response(500, json={"error": "score failed"})
+        else:
+            self._plain_chat_count += 1
+            if self.fail_plain_chat == self._plain_chat_count:
+                raise httpx.ConnectError("down")
         self._show(body["model"], body["options"]["num_ctx"], body.get("keep_alive"))
         message = dict(self.chat_message)
         extra: dict = {}
@@ -146,6 +153,8 @@ class FakeOllama:
                     extra["logprobs"] = scripted["logprobs"]
             elif self.chat_logprobs is not None:
                 extra["logprobs"] = self.chat_logprobs
+        elif self.chat_replies:
+            message = dict(self.chat_replies.pop(0))
         return httpx.Response(
             200,
             json={

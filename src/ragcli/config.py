@@ -49,6 +49,8 @@ _SECTIONS: dict[str, frozenset[str]] = {
             "rerank_model",
             "rerank_candidates",
             "rerank_num_ctx",
+            "verify",
+            "verify_num_predict",
         }
     ),
     "chunk": frozenset({"target_tokens", "max_tokens", "overlap_tokens"}),
@@ -98,6 +100,8 @@ class Config:
     rerank_model: str
     rerank_candidates: int
     rerank_num_ctx: int
+    verify: bool
+    verify_num_predict: int
     chunk_target_tokens: int
     chunk_max_tokens: int
     chunk_overlap_tokens: int
@@ -161,6 +165,11 @@ def load_config(
     )
     if not 1536 <= rerank_num_ctx <= 2048:
         raise RagError(EXIT_USAGE, t("config.rerank_num_ctx"))
+    verify_num_predict = _plain_int(
+        retrieve, "verify_num_predict", 32, "retrieve.verify_num_predict"
+    )
+    if not 8 <= verify_num_predict <= 64:
+        raise RagError(EXIT_USAGE, t("config.verify_num_predict"))
 
     level = _string(ocr, "recognition_level", "accurate", "ocr.recognition_level")
     if level != "accurate":
@@ -224,6 +233,8 @@ def load_config(
         ),
         rerank_candidates=rerank_candidates,
         rerank_num_ctx=rerank_num_ctx,
+        verify=_bool(retrieve, "verify", False, "retrieve.verify"),
+        verify_num_predict=verify_num_predict,
         chunk_target_tokens=_int(
             chunk, "target_tokens", 480, "chunk.target_tokens", minimum=1
         ),
@@ -286,6 +297,8 @@ def format_config(config: Config) -> str:
         f"retrieve.rerank_model={config.rerank_model}",
         f"retrieve.rerank_candidates={config.rerank_candidates}",
         f"retrieve.rerank_num_ctx={config.rerank_num_ctx}",
+        f"retrieve.verify={'true' if config.verify else 'false'}",
+        f"retrieve.verify_num_predict={config.verify_num_predict}",
         f"chunk.target_tokens={config.chunk_target_tokens}",
         f"chunk.max_tokens={config.chunk_max_tokens}",
         f"chunk.overlap_tokens={config.chunk_overlap_tokens}",
