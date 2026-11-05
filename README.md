@@ -92,7 +92,9 @@ rag config show
 
 `--config` selects a TOML file. The default search walks upward from the working directory for `rag.toml`. `--data-dir` overrides `paths.data_dir`. `--verbose` turns on debug logs. `--lock-timeout` is how many seconds to wait for the Ollama lock. `0` means do not wait.
 
-`rag ingest` accepts `--force`, `--resume`, `--no-ocr`, `--no-vision`, `--no-embed`, `--strict`, `--max-pages`, and `--max-bytes`. `rag ask` accepts `--k` (1 to 8), `--model`, `--no-fallback`, `--show-chunks`, and `--json`.
+`rag ingest` accepts `--force`, `--resume`, `--no-ocr`, `--no-vision`, `--no-embed`, `--strict`, `--max-pages`, and `--max-bytes`. `rag ask` accepts `--k` (1 to 8), `--model`, `--no-fallback`, `--show-chunks`, `--json`, `--verify`, and `--no-verify`.
+
+`--verify` checks this draft against the excerpts with the same local model. `--no-verify` turns the check off for this question. The default is off. `[retrieve] verify` in `rag.toml` sets the default, and either flag overrides the file. The model must answer exactly `PASS` or exactly `FAIL`. `PASS` keeps the draft. `FAIL` prints `The documents do not contain the answer.` The check does not retrieve again.
 
 `--lang` chooses the interface language, `en` or `zh`. `en` is English and is the default. `zh` is Traditional Chinese. The flag overrides `[ui] language` in `rag.toml`. When both are absent, the interface is English. ragcli does not read `LANG`, `LC_ALL`, or the macOS preferred language. The value must be exactly `en` or `zh`. `[ocr] languages` chooses Vision recognition and does not follow the interface language. The usage line, section headings, the help-action sentence, and argparse error text follow `--lang` and `ui.language`.
 

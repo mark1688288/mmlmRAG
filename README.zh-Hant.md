@@ -92,7 +92,9 @@ rag config show
 
 `--config` 指定一個 TOML 檔。預設由工作目錄向上尋找 `rag.toml`。`--data-dir` 覆蓋 `paths.data_dir`。`--verbose` 打開除錯日誌。`--lock-timeout` 是等待 Ollama 鎖的秒數。`0` 表示不等待。
 
-`rag ingest` 接受 `--force`、`--resume`、`--no-ocr`、`--no-vision`、`--no-embed`、`--strict`、`--max-pages` 同 `--max-bytes`。`rag ask` 接受 `--k`（1 到 8）、`--model`、`--no-fallback`、`--show-chunks` 同 `--json`。
+`rag ingest` 接受 `--force`、`--resume`、`--no-ocr`、`--no-vision`、`--no-embed`、`--strict`、`--max-pages` 同 `--max-bytes`。`rag ask` 接受 `--k`（1 到 8）、`--model`、`--no-fallback`、`--show-chunks`、`--json`、`--verify` 同 `--no-verify`。
+
+`--verify` 用同一個本機模型對照摘錄核對這次草稿。`--no-verify` 關閉這次核對。預設是關閉。`rag.toml` 的 `[retrieve] verify` 設定預設，兩個旗標都會覆蓋設定檔。模型只能回答精確的 `PASS` 或精確的 `FAIL`。`PASS` 保留草稿。`FAIL` 印出「資料中找不到答案。」核對不會再檢索。
 
 `--lang` 選擇介面語言，`en` 或 `zh`。`en` 是英文，也是預設。`zh` 是繁體中文。這個旗標覆蓋 `rag.toml` 的 `[ui] language`。兩者都沒有時，介面是英文。ragcli 不讀 `LANG`、`LC_ALL`，也不讀 macOS 偏好語言。值必須恰好是 `en` 或 `zh`。`[ocr] languages` 選擇 Vision 辨識語言，不跟介面語言連動。用法列、區段標題、說明動作那一句，以及 argparse 的錯誤外框，跟 `--lang` 與 `ui.language`。
 
